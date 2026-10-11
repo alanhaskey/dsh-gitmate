@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createGitCore, diffRows, shellQuote } from '../lib/git-core.js';
+import { buildGraph, createGitCore, diffRows, shellQuote } from '../lib/git-core.js';
 import {
   buildUserPrompt,
   explainFileChange,
@@ -560,6 +560,83 @@ try {
 
   const blanketDiscard = await runTool('git_stage', { cwd: toolRepo, action: 'discard' });
   check('git_stage refuses a blanket discard', blanketDiscard.value.ok === false && blanketDiscard.text.startsWith('error:'), blanketDiscard.text);
+
+  section('commit graph lanes');
+  const linear = buildGraph([{ hash: 'c', parents: ['b'] }, { hash: 'b', parents: ['a'] }, { hash: 'a', parents: [] }]);
+  check('a linear history is one lane', linear.laneCount === 1 && linear.rows.every((row) => row.lane === 0), linear);
+  check('the oldest commit ends its lane', linear.rows[2].after.length === 0 && linear.rows[2].before.length === 1, linear.rows[2]);
+  check('a middle commit keeps its lane open', linear.rows[1].before[0] === 0 && linear.rows[1].after[0] === 0, linear.rows[1]);
+
+  const merged = buildGraph([
+    { hash: 'm', parents: ['a', 'b'] },
+    { hash: 'a', parents: ['c'] },
+    { hash: 'b', parents: ['c'] },
+    { hash: 'c', parents: [] },
+  ]);
+  check('a merge opens a second lane', merged.laneCount === 2, merged);
+  check('the merge row links both parents', merged.rows[0].parentLanes.join(',') === '0,1', merged.rows[0]);
+  check('the second branch gets its own lane', merged.rows[2].lane === 1, merged.rows[2]);
+  check('both branches rejoin at the shared parent', merged.rows[3].before.join(',') === '0,1', merged.rows[3]);
+
+  const branchy = buildGraph([
+    { hash: 't2', parents: ['t1'] },
+    { hash: 't1', parents: ['base'] },
+    { hash: 'main2', parents: ['base'] },
+    { hash: 'base', parents: [] },
+  ]);
+  check('a second head takes a free lane', branchy.rows[2].lane === 1, branchy.rows[2]);
+  check('the shared ancestor rejoins them', branchy.rows[3].before.join(',') === '0,1', branchy.rows[3]);
+  check('the graph never reports fewer than one lane', buildGraph([]).laneCount === 1 && buildGraph([]).rows.length === 0);
+
+  section('history for the graph view');
+  const historyRepo = join(sandbox, 'history-repo');
+  await core.init({ cwd: historyRepo });
+  await core.config({ cwd: historyRepo, action: 'set', key: 'user.name', value: 'Graph User' });
+  await core.config({ cwd: historyRepo, action: 'set', key: 'user.email', value: 'graph@example.com' });
+  const emptyHistory = await core.history({ cwd: historyRepo });
+  check('an empty repository reports no commits instead of failing', emptyHistory.ok === true && emptyHistory.commits.length === 0, emptyHistory);
+  check('and still describes a graph', emptyHistory.graph.laneCount === 1 && emptyHistory.graph.rows.length === 0, emptyHistory.graph);
+
+  for (const [file, text, message] of [
+    ['a.txt', 'one\n', 'feat: first'],
+    ['b.txt', 'two\n', 'feat: second'],
+  ]) {
+    writeFileSync(join(historyRepo, file), text);
+    await core.stage({ cwd: historyRepo, action: 'add' });
+    await core.commit({ cwd: historyRepo, message });
+  }
+  await core.branch({ cwd: historyRepo, action: 'create', name: 'feature/graph' });
+  writeFileSync(join(historyRepo, 'c.txt'), 'three\n');
+  await core.commit({ cwd: historyRepo, all: true, message: 'feat: on the branch' });
+  await core.branch({ cwd: historyRepo, action: 'switch', name: 'main' });
+  writeFileSync(join(historyRepo, 'd.txt'), 'four\n');
+  await core.commit({ cwd: historyRepo, all: true, message: 'feat: on main' });
+  const graphRepo = await core.history({ cwd: historyRepo, limit: 20 });
+  // Both branch tips are within the same second, so the order between them is
+  // the graph's business, not this test's: what matters is that both are here.
+  const subjects = graphRepo.commits.map((c) => c.subject);
+  check(
+    'lists every branch, not just the checked-out one',
+    graphRepo.commits.length === 4 &&
+      subjects.includes('feat: on main') &&
+      subjects.includes('feat: on the branch') &&
+      subjects.at(-1) === 'feat: first',
+    subjects,
+  );
+  check(
+    'says which commit HEAD points at',
+    graphRepo.commits.some((c) => c.hash === graphRepo.head && c.refs.includes('main')),
+    { head: graphRepo.head, tips: graphRepo.commits.slice(0, 2).map((c) => [c.subject, c.refs]) },
+  );
+  check('gives every commit a short hash', graphRepo.commits.every((c) => c.shortHash.length === 7), graphRepo.commits.map((c) => c.shortHash));
+  check('links each commit to its parents', graphRepo.commits[0].parents.length === 1, graphRepo.commits[0]);
+  check('the root commit has no parent', graphRepo.commits.at(-1).parents.length === 0, graphRepo.commits.at(-1));
+  check('produces one graph row per commit', graphRepo.graph.rows.length === graphRepo.commits.length, graphRepo.graph.rows.length);
+  check('detects the divergence as two lanes', graphRepo.graph.laneCount === 2, graphRepo.graph);
+  check('names the branch that points at a commit', graphRepo.commits.some((c) => c.refs.includes('feature/graph')), graphRepo.commits.map((c) => c.refs));
+  check('names the checked-out branch', graphRepo.commits.some((c) => c.refs.includes('main')), graphRepo.commits.map((c) => c.refs));
+  check('reports the current branch', graphRepo.branch === 'main', graphRepo.branch);
+  check('honours the limit', (await core.history({ cwd: historyRepo, limit: 2 })).commits.length === 2);
 
   section('per-file line counts for the panel');
   const counted = await core.status({ cwd: toolRepo, withCounts: true });

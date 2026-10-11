@@ -103,7 +103,10 @@ window.__ModuleLoader__.load({
         moreContext: '展开更多上下文',
         lessContext: '收起到默认上下文',
         emptyPatch: '这个文件没有可显示的差异。',
-        resizeHint: '拖动调整高度，双击恢复默认',
+        resizeHint: '拖动调整输入框高度，双击恢复默认',
+        history: '历史提交',
+        noCommits: '还没有任何提交',
+        noCommitsHint: '第一次提交之后，这里会画出提交图。',
         nothingStaged: '还没有暂存任何改动。',
         explain: '解释改动',
         explaining: '正在总结…',
@@ -225,7 +228,10 @@ window.__ModuleLoader__.load({
         moreContext: 'Show more context',
         lessContext: 'Collapse to default context',
         emptyPatch: 'This file has no diff to show.',
-        resizeHint: 'Drag to resize, double-click to reset',
+        resizeHint: 'Drag to resize the message box, double-click to reset',
+        history: 'Commit history',
+        noCommits: 'No commits yet',
+        noCommitsHint: 'The graph appears here after the first commit.',
         nothingStaged: 'Nothing is staged yet.',
         explain: 'Explain change',
         explaining: 'Summarizing…',
@@ -392,7 +398,6 @@ window.__ModuleLoader__.load({
         h('circle', { cx: 15, cy: 16, r: 2.4, fill: 'var(--dsw-alias-bg-layer-1)' }),
       );
     const IconBack = (p) => h(Glyph, p, h('path', { d: 'M19 12H5' }), h('path', { d: 'm11 6-6 6 6 6' }));
-    const IconClose = (p) => h(Glyph, p, h('path', { d: 'M7 7l10 10' }), h('path', { d: 'M17 7 7 17' }));
     const IconPlus = (p) => h(Glyph, p, h('path', { d: 'M12 6.5v11' }), h('path', { d: 'M6.5 12h11' }));
     const IconMinus = (p) => h(Glyph, p, h('path', { d: 'M6.5 12h11' }));
     const IconUndo = (p) =>
@@ -423,6 +428,16 @@ window.__ModuleLoader__.load({
       );
     const IconTrash = (p) =>
       h(Glyph, p, h('path', { d: 'M4.5 7h15' }), h('path', { d: 'M9.5 7V4.8h5V7' }), h('path', { d: 'M6.5 7l1 12.2h9L17.5 7' }));
+    const IconGraph = (p) =>
+      h(
+        Glyph,
+        p,
+        h('path', { d: 'M7 5.5v13' }),
+        h('path', { d: 'M17 8.5v2a4 4 0 0 1-4 4H7' }),
+        h('circle', { cx: 7, cy: 4.5, r: 2.2 }),
+        h('circle', { cx: 7, cy: 19.5, r: 2.2 }),
+        h('circle', { cx: 17, cy: 6.5, r: 2.2 }),
+      );
     const IconCheck = (p) => h(Glyph, p, h('path', { d: 'm5 12.5 4.5 4.5L19 7.5' }));
     const IconCommit = (p) =>
       h(Glyph, p, h('circle', { cx: 12, cy: 12, r: 3.6 }), h('path', { d: 'M12 3.5v4.9' }), h('path', { d: 'M12 15.6v4.9' }));
@@ -483,7 +498,7 @@ window.__ModuleLoader__.load({
 .dsg-btn-quiet:hover:not(:disabled) { border-color:var(--dsw-alias-border-l1); color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-layer-1); }
 .dsg-input { flex:1 1 auto; min-width:0; border:1px solid var(--dsw-alias-border-l1); border-radius:7px; background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary); font-size:11px; min-height:26px; padding:3px 8px; font-family:inherit; transition:border-color .12s ease; }
 .dsg-input:focus { outline:none; border-color:var(--dsw-alias-brand-primary); }
-.dsg-textarea { width:100%; resize:vertical; min-height:62px; border:1px solid var(--dsw-alias-border-l1); border-radius:8px; background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; line-height:1.6; padding:7px 8px; transition:border-color .12s ease; }
+.dsg-textarea { width:100%; resize:none; height:62px; min-height:44px; border:1px solid var(--dsw-alias-border-l1); border-radius:8px; background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; line-height:1.6; padding:7px 8px; transition:border-color .12s ease; }
 .dsg-textarea:focus { outline:none; border-color:var(--dsw-alias-brand-primary); }
 .dsg-check { display:inline-flex; align-items:center; gap:5px; color:var(--dsw-alias-label-secondary); font-size:11px; cursor:pointer; user-select:none; }
 .dsg-field { display:flex; align-items:center; gap:6px; }
@@ -514,8 +529,6 @@ window.__ModuleLoader__.load({
 .dsg-splitter { flex:0 0 auto; height:9px; margin:-4px 0 -4px; cursor:row-resize; position:relative; z-index:2; }
 .dsg-splitter::after { content:''; position:absolute; left:10px; right:10px; top:4px; height:1px; background:var(--dsw-alias-border-l1); transition:background-color .12s ease; }
 .dsg-splitter:hover::after, .dsg-splitter:active::after { background:var(--dsw-alias-brand-primary); }
-.dsg-commit-host { flex:0 0 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; }
-.dsg-commit-host > .dsg-commit { flex:1 1 auto; }
 
 /* diff -------------------------------------------------------------------- */
 .dsg-diff { border-top:1px solid var(--dsw-alias-border-l1); border-left:2px solid var(--dsw-alias-brand-primary); background:var(--dsw-alias-bg-layer-2); }
@@ -541,11 +554,24 @@ window.__ModuleLoader__.load({
 .dsg-dmark { border-radius:2px; background:var(--dsw-alias-bg-layer-2); background:color-mix(in srgb, currentColor 24%, transparent); }
 .dsg-dhunk { margin:6px 0 3px; padding:3px 10px; color:var(--dsw-alias-label-secondary); background:var(--dsw-alias-bg-base); border-top:1px solid var(--dsw-alias-border-l1); border-bottom:1px solid var(--dsw-alias-border-l1); white-space:pre-wrap; overflow-wrap:anywhere; }
 .dsg-dmeta { padding:2px 10px; color:var(--dsw-alias-label-secondary); white-space:pre-wrap; overflow-wrap:anywhere; }
-.dsg-stats { display:inline-flex; align-items:center; gap:5px; font-size:10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
 .dsg-stat-add { color:var(--dsw-alias-state-success-primary); }
 .dsg-stat-del { color:var(--dsw-alias-state-error-primary); }
 
 /* commit card ------------------------------------------------------------- */
+/* History: the graph is drawn by the panel, in a fixed-width column so the
+   lanes of consecutive rows line up into continuous lines. */
+.dsg-hrow { display:flex; align-items:flex-start; gap:8px; padding:4px 10px 4px 6px; border-bottom:1px solid var(--dsw-alias-border-l1); }
+.dsg-hrow:last-child { border-bottom:none; }
+.dsg-hrow:hover { background:var(--dsw-alias-bg-layer-1); }
+.dsg-graph { flex:0 0 auto; overflow:visible; }
+.dsg-glane { stroke:var(--dsw-alias-border-l2); stroke-width:1.6; fill:none; }
+.dsg-gnode { fill:var(--dsw-alias-bg-base); stroke:var(--dsw-alias-label-secondary); stroke-width:1.6; }
+.dsg-gnode-head { fill:var(--dsw-alias-brand-primary); stroke:var(--dsw-alias-brand-primary); stroke-width:1.6; }
+.dsg-hmain { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:2px; padding-top:2px; }
+.dsg-hline { display:flex; align-items:center; gap:5px; min-width:0; }
+.dsg-hsubject { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; }
+.dsg-ref { flex:0 0 auto; max-width:10em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:1px solid var(--dsw-alias-brand-primary); color:var(--dsw-alias-brand-primary); border-radius:5px; padding:0 5px; font-size:9.5px; line-height:1.7; }
+.dsg-hmeta { display:flex; align-items:center; gap:8px; color:var(--dsw-alias-label-secondary); font-size:10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
 .dsg-commit { flex:0 0 auto; border-top:1px solid var(--dsw-alias-border-l1); padding:10px; display:flex; flex-direction:column; gap:8px; background:var(--dsw-alias-bg-base); }
 .dsg-card { display:flex; flex-direction:column; gap:8px; padding:9px; border:1px solid var(--dsw-alias-border-l1); border-radius:10px; background:var(--dsw-alias-bg-layer-1); }
 .dsg-actions { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
@@ -564,11 +590,11 @@ window.__ModuleLoader__.load({
 .dsg-empty-text { font-size:11px; line-height:1.7; max-width:26em; }
 
 /* branch popover ---------------------------------------------------------- */
-.dsg-popover { margin:8px 10px; border:1px solid var(--dsw-alias-border-l1); border-radius:12px; background:var(--dsw-alias-bg-overlay); display:flex; flex-direction:column; min-height:0; max-height:52%; flex:0 0 auto; overflow:hidden; }
+.dsg-popover { margin:8px 10px; border:1px solid var(--dsw-alias-border-l1); border-radius:12px; background:var(--dsw-alias-bg-base); display:flex; flex-direction:column; min-height:0; max-height:52%; flex:0 0 auto; overflow:hidden; }
 .dsg-popover-head { display:flex; align-items:center; gap:6px; padding:8px 9px 7px; border-bottom:1px solid var(--dsw-alias-border-l1); }
 .dsg-popover-title { flex:1 1 auto; font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--dsw-alias-label-secondary); font-weight:600; }
 .dsg-popover-list { display:flex; flex-direction:column; gap:1px; padding:5px; overflow:auto; min-height:0; }
-.dsg-popover-foot { display:flex; align-items:center; gap:6px; padding:7px 9px; border-top:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); }
+.dsg-popover-foot { display:flex; align-items:center; gap:6px; padding:7px 9px; border-top:1px solid var(--dsw-alias-border-l1); }
 .dsg-branch-row { display:flex; align-items:center; gap:7px; padding:5px 7px; border-radius:8px; font-size:11.5px; }
 .dsg-branch-row:hover { background:var(--dsw-alias-bg-layer-1); }
 .dsg-branch-row-current .dsg-branch-row-name { font-weight:600; }
@@ -649,6 +675,58 @@ window.__ModuleLoader__.load({
         default:
           return 'var(--dsw-alias-label-secondary)';
       }
+    }
+
+    /** Geometry shared by every graph cell, so rows line up into columns. */
+    const LANE_W = 11;
+    const ROW_H = 24;
+
+    /**
+     * One commit's cell of the history graph.
+     *
+     * The Host decides the lanes; this draws them: a vertical line for every lane
+     * passing through the row, a curve from the commit's node to each parent's
+     * lane, and the node itself. The commit `HEAD` points at is filled with the
+     * brand colour, so the current position is findable at a glance.
+     */
+    function GraphCell({ row, laneCount, head }) {
+      const mid = ROW_H / 2;
+      const width = Math.max(1, laneCount) * LANE_W + 2;
+      const x = (lane) => lane * LANE_W + LANE_W / 2 + 1;
+      const before = new Set(row.before ?? []);
+      const after = new Set(row.after ?? []);
+      const parts = [];
+      for (const lane of [...new Set([...(row.before ?? []), ...(row.after ?? [])])]) {
+        parts.push(
+          h('line', {
+            key: `lane-${lane}`,
+            x1: x(lane),
+            y1: before.has(lane) ? 0 : mid,
+            x2: x(lane),
+            y2: after.has(lane) ? ROW_H : mid,
+            className: 'dsg-glane',
+          }),
+        );
+      }
+      for (const parent of row.parentLanes ?? []) {
+        if (parent === row.lane) continue;
+        parts.push(
+          h('path', {
+            key: `parent-${parent}`,
+            d: `M ${x(row.lane)} ${mid} C ${x(row.lane)} ${mid + 9}, ${x(parent)} ${ROW_H - 9}, ${x(parent)} ${ROW_H}`,
+            className: 'dsg-glane',
+            fill: 'none',
+          }),
+        );
+      }
+      parts.push(
+        h('circle', { key: 'node', cx: x(row.lane), cy: mid, r: 3.4, className: head ? 'dsg-gnode-head' : 'dsg-gnode' }),
+      );
+      return h(
+        'svg',
+        { width, height: ROW_H, viewBox: `0 0 ${width} ${ROW_H}`, className: 'dsg-graph', 'aria-hidden': true },
+        parts,
+      );
     }
 
     /** One piece of a line, marking the changed span when the Host found one. */
@@ -799,9 +877,10 @@ window.__ModuleLoader__.load({
         const [settings, setSettings] = useState(null);
         const [draft, setDraft] = useState(null);
         const [ignorePlan, setIgnorePlan] = useState(null);
+        const [history, setHistory] = useState(null);
         const [wideContext, setWideContext] = useState(false);
-        /** Pixels reserved for the commit area; null means "as tall as it needs". */
-        const [commitHeight, setCommitHeight] = useState(null);
+        /** Pixels given to the message box; null means its stylesheet default. */
+        const [messageHeight, setMessageHeight] = useState(null);
         const [ignoreChoice, setIgnoreChoice] = useState(null);
         const mounted = useRef(true);
         const ignoreRef = useRef(null);
@@ -1086,6 +1165,24 @@ window.__ModuleLoader__.load({
           [act, t],
         );
 
+        /** Read the commit graph, newest first. */
+        const loadHistory = useCallback(async () => {
+          setBusy('history');
+          const answer = await request('history', { limit: 40 });
+          if (!mounted.current) return;
+          setBusy('');
+          if (answer.error) {
+            setError(answer.error);
+            return;
+          }
+          if (answer.value?.ok !== true) {
+            setError(answer.value?.error ?? 'could not read the history');
+            return;
+          }
+          setError('');
+          setHistory(answer.value);
+        }, [request]);
+
         /** Read the plugin settings and the `.gitignore` plan together. */
         const loadSettings = useCallback(async () => {
           const [settingsAnswer, planAnswer] = await Promise.all([request('settings'), request('gitignore')]);
@@ -1240,6 +1337,25 @@ window.__ModuleLoader__.load({
                 onClick: () => void refresh(false),
               },
               h(IconRefresh, { size: 15 }),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: `dsg-btn dsg-btn-icon${view === 'history' ? ' dsg-btn-primary' : ' dsg-btn-quiet'}`,
+                disabled,
+                title: view === 'history' ? t('back') : t('history'),
+                onClick: () => {
+                  if (view === 'history') {
+                    setView('changes');
+                    void refresh(true);
+                  } else {
+                    setView('history');
+                    void loadHistory();
+                  }
+                },
+              },
+              view === 'history' ? h(IconBack, { size: 15 }) : h(IconGraph, { size: 15 }),
             ),
             h(
               'button',
@@ -1439,23 +1555,14 @@ window.__ModuleLoader__.load({
         );
 
         /** The patch, and once asked for, the plain-language summary above it. */
-        const diffPane = (entry) => {
-          const stats = (patch?.files ?? []).find((file) => file.path === entry.path) ?? patch?.files?.[0];
-          return h(
+        const diffPane = (entry) =>
+          h(
             'div',
             { className: 'dsg-diff' },
             h(
               'div',
               { className: 'dsg-diff-head' },
               h('b', null, entry.path),
-              stats
-                ? h(
-                    'span',
-                    { className: 'dsg-stats' },
-                    h('span', { className: 'dsg-stat-add' }, `+${stats.additions ?? 0}`),
-                    h('span', { className: 'dsg-stat-del' }, `−${stats.deletions ?? 0}`),
-                  )
-                : null,
               h('span', { className: 'dsg-spacer' }),
               patch?.truncated ? h('span', { className: 'dsg-hint' }, t('truncated')) : null,
               h(
@@ -1479,20 +1586,6 @@ window.__ModuleLoader__.load({
                 h(IconBubble, { size: 13 }),
                 busy === 'explain' ? t('explaining') : t('explain'),
               ),
-              h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dsg-btn dsg-btn-icon dsg-btn-quiet',
-                  title: t('close'),
-                  onClick: () => {
-                    setOpen(null);
-                    setPatch(null);
-                    setSummary(null);
-                  },
-                },
-                h(IconClose, { size: 14 }),
-              ),
             ),
             summary !== null && summary.path === entry.path
               ? h(
@@ -1504,7 +1597,6 @@ window.__ModuleLoader__.load({
               : null,
             patch === null ? h('div', { className: 'dsg-empty' }, t('working')) : h(DiffBody, { rows: patch.rows }),
           );
-        };
 
         const changes = h(
           'div',
@@ -1625,6 +1717,8 @@ window.__ModuleLoader__.load({
             { className: 'dsg-card' },
             h('textarea', {
               className: 'dsg-textarea',
+              ref: commitRef,
+              style: messageHeight === null ? undefined : { height: `${messageHeight}px` },
               rows: 3,
               placeholder: t('messagePlaceholder'),
               value: message,
@@ -1728,9 +1822,10 @@ window.__ModuleLoader__.load({
         /**
          * The bar between the list and the commit area.
          *
-         * Dragging it sets how much height the commit area keeps; the list takes
-         * whatever is left. Double-clicking returns to the natural height, which
-         * matters because there is no other way back once it is resized.
+         * Dragging it gives height to the *message box*, so the extra space goes
+         * into the field being typed in rather than pushing the buttons around;
+         * the list takes whatever is left. Double-clicking restores the default,
+         * which matters because there is no other way back once it is resized.
          */
         const splitter = h('div', {
           className: 'dsg-splitter',
@@ -1742,14 +1837,14 @@ window.__ModuleLoader__.load({
           onPointerDown: (event) => {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
-            dragRef.current = { y: event.clientY, height: commitRef.current?.offsetHeight ?? 0 };
+            dragRef.current = { y: event.clientY, height: commitRef.current?.offsetHeight ?? 62 };
           },
           onPointerMove: (event) => {
             const drag = dragRef.current;
             if (drag === null) return;
-            const room = (rootRef.current?.offsetHeight ?? 600) - 160;
-            const next = Math.max(120, Math.min(drag.height + (drag.y - event.clientY), Math.max(140, room)));
-            setCommitHeight(next);
+            // Leave room for the hero and a useful slice of the list.
+            const room = Math.max(80, (rootRef.current?.offsetHeight ?? 600) - 300);
+            setMessageHeight(Math.max(52, Math.min(drag.height + (drag.y - event.clientY), room)));
           },
           onPointerUp: (event) => {
             dragRef.current = null;
@@ -1761,6 +1856,53 @@ window.__ModuleLoader__.load({
             dragRef.current = null;
           },
         });
+
+        /** The history view: the commit graph plus what each commit says. */
+        const historyView =
+          history === null
+            ? h('div', { className: 'dsg-empty' }, t('working'))
+            : history.commits.length === 0
+              ? h(
+                  'div',
+                  { className: 'dsg-empty' },
+                  h('span', { className: 'dsg-empty-mark' }, h(GitIcon, { size: 34 })),
+                  h('div', { className: 'dsg-empty-title' }, t('noCommits')),
+                  h('div', { className: 'dsg-empty-text' }, t('noCommitsHint')),
+                )
+              : h(
+                  'div',
+                  { className: 'dsg-scroll' },
+                  history.commits.map((commit, index) =>
+                    h(
+                      'div',
+                      { className: 'dsg-hrow', key: commit.hash },
+                      h(GraphCell, {
+                        row: history.graph.rows[index] ?? { lane: 0, before: [], after: [], parentLanes: [] },
+                        laneCount: history.graph.laneCount,
+                        head: commit.hash === history.head,
+                      }),
+                      h(
+                        'div',
+                        { className: 'dsg-hmain' },
+                        h(
+                          'div',
+                          { className: 'dsg-hline' },
+                          commit.refs.map((ref) =>
+                            h('span', { className: 'dsg-ref', key: ref, title: ref }, ref),
+                          ),
+                          h('span', { className: 'dsg-hsubject' }, commit.subject),
+                        ),
+                        h(
+                          'div',
+                          { className: 'dsg-hmeta' },
+                          h('span', null, commit.shortHash),
+                          h('span', null, commit.author),
+                          h('span', null, String(commit.date ?? '').slice(0, 10)),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
 
         /** One labelled settings row. */
         const field = (label, control) =>
@@ -1926,19 +2068,15 @@ window.__ModuleLoader__.load({
           !status ? h('div', { className: 'dsg-empty' }, t('working')) : null,
           status && !status.isRepo ? emptyState : null,
           status?.isRepo && !status.identityConfigured ? identityNote : null,
-          status?.isRepo ? (view === 'settings' ? settingsView : changes) : null,
-          status?.isRepo && view === 'changes' ? splitter : null,
-          status?.isRepo && view === 'changes'
-            ? h(
-                'div',
-                {
-                  className: 'dsg-commit-host',
-                  ref: commitRef,
-                  style: commitHeight === null ? undefined : { height: `${commitHeight}px` },
-                },
-                commitBox,
-              )
+          status?.isRepo
+            ? view === 'settings'
+              ? settingsView
+              : view === 'history'
+                ? historyView
+                : changes
             : null,
+          status?.isRepo && view === 'changes' ? splitter : null,
+          status?.isRepo && view === 'changes' ? commitBox : null,
         );
       };
     }

@@ -64,6 +64,7 @@ const ENDPOINTS = new Set([
   'settings',
   'reset',
   'gitignore',
+  'history',
 ]);
 
 /** One failure in the envelope shape the Harness RPC transport uses. */
@@ -193,6 +194,8 @@ export function createPanelDispatcher(operations) {
         if (patch.trim() === '') return success({ ok: false, error: `there is no change in ${path} to explain` });
         return success(await explainFor(cwd, { path, patch, signal }));
       }
+      case 'history':
+        return success(await core.history({ ...bound, limit: Number.isInteger(payload?.limit) ? payload.limit : 30 }));
       case 'settings':
         if (text(payload, 'action') === 'set') {
           return success(await writeSettings(payload?.values));

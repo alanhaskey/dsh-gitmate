@@ -186,6 +186,65 @@ function flattenGroups(groups) {
   return lines;
 }
 
+/**
+ * Lay a commit list out in lanes, newest first.
+ *
+ * Each row gets the lane its commit sits in, the lanes whose line passes
+ * through it, and the lanes its parents continue into. A lane is claimed by the
+ * first commit that needs it and freed when nothing waits on it — the usual
+ * swimlane arrangement, enough for the shapes a reader meets in practice. The
+ * ordering comes from `--topo-order`, so parents always follow their children.
+ *
+ * @param commits - `{ hash, parents }` records, newest first.
+ * @returns `{ rows, laneCount }`, one row per commit in the same order.
+ */
+export function buildGraph(commits) {
+  /** Lane index → the commit hash that lane is waiting for. */
+  const lanes = [];
+  const rows = [];
+  let laneCount = 1;
+
+  const occupied = () => {
+    const taken = [];
+    for (let index = 0; index < lanes.length; index += 1) {
+      if (lanes[index] !== undefined) taken.push(index);
+    }
+    return taken;
+  };
+
+  const claim = (hash) => {
+    const held = lanes.indexOf(hash);
+    if (held !== -1) return held;
+    const free = lanes.indexOf(undefined);
+    const lane = free === -1 ? lanes.length : free;
+    lanes[lane] = hash;
+    return lane;
+  };
+
+  for (const commit of commits) {
+    const before = occupied();
+    const lane = claim(commit.hash);
+    const parents = Array.isArray(commit.parents) ? commit.parents : [];
+
+    // This lane now waits for the first parent, or is free at a root commit.
+    if (parents.length === 0) lanes[lane] = undefined;
+    else lanes[lane] = parents[0];
+
+    const parentLanes = [lane];
+    for (const parent of parents.slice(1)) {
+      const target = claim(parent);
+      if (!parentLanes.includes(target)) parentLanes.push(target);
+    }
+
+    while (lanes.length > 0 && lanes[lanes.length - 1] === undefined) lanes.pop();
+    const after = occupied();
+
+    laneCount = Math.max(laneCount, lane + 1, ...before, ...after, ...parentLanes);
+    rows.push({ lane, before, after, parentLanes });
+  }
+  return { rows, laneCount };
+}
+
 /** Hunk header: `@@ -old,cnt +new,cnt @@` optionally followed by a section. */
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/;
 
@@ -877,6 +936,103 @@ export function createGitCore({ exec, config = {} }) {
     return { ok: true, isRepo: true, root, commits };
   }
 
+  /**
+   * Read recent commits together with everything a graph view needs.
+   *
+   * Separate from `log` on purpose: the agent tool wants subjects, while the
+   * panel wants parent links and the refs pointing at each commit, and the extra
+   * git calls are only worth paying for the view that draws them.
+   *
+   * @param args - `limit` and `cwd`.
+   */
+  async function history(args = {}) {
+    const { cwd, signal } = args;
+    const found = await probe({ cwd, signal });
+    if (!found.isRepo) {
+      return { ok: false, isRepo: false, cwd: found.cwd, error: `not a git repository: ${found.reason}`, commits: [] };
+    }
+    const root = found.root;
+    const limit = Math.min(Math.max(Number(args.limit) || 30, 1), 200);
+    // `--all` on purpose: a graph of only the checked-out branch is a line, not
+    // a tree. Every branch, remote-tracking ref, and tag is history a reader
+    // wants to place themselves in, and refs below say which is which.
+    const result = await run(
+      [
+        'log',
+        '-n',
+        String(limit),
+        '--all',
+        '--topo-order',
+        '--no-color',
+        '--pretty=format:%h%x1f%H%x1f%P%x1f%an%x1f%aI%x1f%s%x00',
+      ],
+      { cwd: root, signal },
+    );
+    if (!result.ok) {
+      if (/does not have any commits yet|unknown revision|bad default revision/i.test(result.stderr)) {
+        return {
+          ok: true,
+          isRepo: true,
+          root,
+          commits: [],
+          graph: { rows: [], laneCount: 1 },
+          note: 'the repository has no commits yet',
+        };
+      }
+      return { ok: false, isRepo: true, root, error: describeFailure(result, 'git log failed'), commits: [] };
+    }
+    const commits = result.stdout
+      .split('\0')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const [shortHash, fullHash, parents, author, date, ...subject] = entry.split('\u001f');
+        return {
+          hash: fullHash,
+          shortHash,
+          parents: parents === '' ? [] : parents.split(' '),
+          subject: subject.join('\u001f'),
+          author,
+          date,
+          refs: [],
+        };
+      });
+
+    // One extra call names every branch and remote-tracking ref, so the view can
+    // show where they point instead of leaving the reader to guess.
+    const refs = await run(
+      ['for-each-ref', '--format=%(refname:short)%1f%(objectname)', 'refs/heads', 'refs/remotes'],
+      { cwd: root, signal },
+    );
+    if (refs.ok) {
+      const byHash = new Map(commits.map((commit) => [commit.hash, commit]));
+      for (const line of refs.stdout.split('\n')) {
+        if (line.trim() === '') continue;
+        const [name, objectId] = line.split('\u001f');
+        const commit = byHash.get((objectId ?? '').trim());
+        if (commit !== undefined && name !== undefined && !name.endsWith('/HEAD')) commit.refs.push(name.trim());
+      }
+    }
+
+    // The graph only needs the short parent ids, which is also what the view shows.
+    const graph = buildGraph(
+      commits.map((commit) => ({ hash: commit.shortHash, parents: commit.parents.map((parent) => parent.slice(0, 7)) })),
+    );
+    const current = await run(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root, signal });
+    const head = await run(['rev-parse', 'HEAD'], { cwd: root, signal });
+    return {
+      ok: true,
+      isRepo: true,
+      root,
+      branch: current.ok ? current.stdout.trim() : '',
+      // With `--all`, the newest row is not necessarily the checked-out commit,
+      // so the view is told which one HEAD points at instead of assuming.
+      head: head.ok ? head.stdout.trim() : '',
+      commits,
+      graph,
+    };
+  }
+
   /** Give a repository the commit identity a first commit needs, if it is missing. */
   async function identity(root, signal) {
     const name = await run(['config', '--get', 'user.name'], { cwd: root, signal });
@@ -1492,6 +1648,7 @@ export function createGitCore({ exec, config = {} }) {
     branch,
     changeBundle,
     viewUntracked,
+    history,
     gitignoreGroups: GITIGNORE_GROUPS,
     resetLastCommit,
     gitignorePlan,
