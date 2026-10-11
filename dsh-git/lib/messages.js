@@ -28,12 +28,37 @@ const STABLE_RULES = [
   '- A subject line alone is a correct answer when the change is small and self-evident.',
 ].join('\n');
 
-/** Language policy appended to the stable rules. */
-const LANGUAGE_RULES = {
-  en: 'Write the message in English.',
-  zh: 'Write the message in Simplified Chinese. Keep the `<type>(<scope>):` prefix and any code identifiers in English.',
-  auto: "Write the message in the language of the repository's recent commit subjects; when there are none, write in English.",
-};
+/**
+ * One language policy, phrased for the output being produced.
+ *
+ * Both outputs read the same setting — `messageLanguage` — so a user who picks
+ * 简体中文 gets it for the commit message and for a file explanation alike. Only
+ * the wording differs: the commit-message rules must mention the
+ * `<type>(<scope>):` prefix, and the explanation rules must not.
+ *
+ * @param language - one of `auto`, `en`, `zh`.
+ * @param kind - `message` for a commit message, `explanation` for a file summary.
+ * @returns the instruction appended to that call's system prompt.
+ */
+export function languageRule(language, kind) {
+  const explanation = kind === 'explanation';
+  if (language === 'en') {
+    return explanation ? 'Write the explanation in English.' : 'Write the commit message in English.';
+  }
+  if (language === 'zh') {
+    return explanation
+      ? 'Write the explanation in Simplified Chinese. Keep code identifiers, file paths, and any quoted patch text exactly as they appear.'
+      : 'Write the commit message in Simplified Chinese. Keep the `<type>(<scope>):` prefix and any code identifiers in English.';
+  }
+  if (explanation) {
+    return [
+      "Write the explanation in the language of the repository's recent commit subjects.",
+      'When the history gives no signal, follow the language of the code comments and user-facing strings in the patch.',
+      'When nothing suggests a language, write in English.',
+    ].join(' ');
+  }
+  return "Write the commit message in the language of the repository's recent commit subjects; when there are none, write in English.";
+}
 
 /** Strip the wrappers a model sometimes adds around an otherwise good message. */
 export function normalizeCommitMessage(raw) {
@@ -144,7 +169,7 @@ export async function generateCommitMessage({
   if (style === 'plain') {
     rules.push('Use a plain imperative subject instead of Conventional Commits: no `type(scope):` prefix, no emoji.');
   }
-  rules.push(LANGUAGE_RULES[language] ?? LANGUAGE_RULES.auto);
+  rules.push(languageRule(language, 'message'));
   const custom = String(template ?? '').trim();
   if (custom !== '') {
     // The user's own wording comes last so it can override the defaults above.
@@ -205,7 +230,7 @@ export async function explainFileChange({
   return runTextCall({
     llm,
     route,
-    system: [EXPLAIN_RULES, LANGUAGE_RULES[language] ?? LANGUAGE_RULES.auto].join('\n\n'),
+    system: [EXPLAIN_RULES, languageRule(language, 'explanation')].join('\n\n'),
     messages: [{ role: 'user', content: [{ type: 'text', text: `Explain this change to \`${path}\`:\n\n${body}` }] }],
     maxTokens,
     signal,

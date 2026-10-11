@@ -21,6 +21,8 @@
  */
 
 /** The exact Fetch route this package answers on, under the shared `/api` channel. */
+import { diffRows } from './git-core.js';
+
 export const PANEL_PATH = '/api/dsh-git';
 
 /** The relative URL the browser half posts to, resolved against the page like the shipped RPC client. */
@@ -28,6 +30,23 @@ export const PANEL_URL = 'api/dsh-git';
 
 /** Largest request body accepted, in bytes. */
 const MAX_BODY_BYTES = 1024 * 1024;
+
+/**
+ * Project one diff result onto what the panel renders.
+ *
+ * The unified patch is replaced by parsed rows: the Host already owns the
+ * parser (and its tests), and the panel then has nothing to interpret — it draws
+ * gutters, signs, and text.
+ * @param result - the value `core.diff` or `core.viewUntracked` returned.
+ * @returns the same result with `rows`/`flags` and without the raw patch.
+ */
+function forPanel(result) {
+  if (result === null || typeof result !== 'object' || result.ok !== true) return result;
+  const { rows, flags } = diffRows(result.patch ?? '');
+  const { patch, ...rest } = result;
+  void patch;
+  return { ...rest, rows, flags };
+}
 
 /** Endpoints the panel may call. */
 const ENDPOINTS = new Set([
@@ -121,14 +140,17 @@ export function createPanelDispatcher(operations) {
           scope,
           ...(paths.length > 0 ? { paths } : {}),
           maxBytes: Number.isInteger(payload?.maxBytes) ? payload.maxBytes : config.maxDiffBytes,
+          // The panel widens the context when the reader asks for more of the
+          // file around a hunk.
+          ...(Number.isInteger(payload?.contextLines) ? { contextLines: payload.contextLines } : {}),
         });
         // An untracked path has no diff at all; show its contents as additions
         // instead of an empty pane.
         if (paths.length === 1 && result.ok !== false && (result.patch ?? '').trim() === '') {
           const preview = await core.viewUntracked({ cwd, path: paths[0], signal });
-          if (preview.ok === true) return success(preview);
+          if (preview.ok === true) return success(forPanel(preview));
         }
-        return success(result);
+        return success(forPanel(result));
       }
       case 'stage': {
         const paths = list(payload, 'paths');

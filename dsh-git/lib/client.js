@@ -71,6 +71,7 @@ window.__ModuleLoader__.load({
         commit: '提交',
         committing: '提交中…',
         pushAfter: '提交后推送',
+        remote: '远程',
         push: '推送',
         pull: '拉取',
         fetch: '获取',
@@ -91,6 +92,9 @@ window.__ModuleLoader__.load({
         clean: '工作区是干净的',
         noChanges: '没有改动',
         truncated: '补丁过长，已截断',
+        moreContext: '展开更多上下文',
+        lessContext: '收起到默认上下文',
+        emptyPatch: '这个文件没有可显示的差异。',
         nothingStaged: '还没有暂存任何改动。',
         explain: '解释改动',
         explaining: '正在总结…',
@@ -111,7 +115,8 @@ window.__ModuleLoader__.load({
         rollbackHard: '丢弃改动',
         rollbackWarning: '已经推送过的提交被撤销会改写历史，之后推送需要 --force-with-lease。',
         rollbackConfirm: '确认',
-        language: '生成说明的语言',
+        language: '生成说明与改动解释的语言',
+        languageHint: '提交说明和「解释改动」共用这一项。',
         langAuto: '跟随仓库既有提交',
         langEn: '英文',
         langZh: '简体中文',
@@ -133,6 +138,8 @@ window.__ModuleLoader__.load({
         gitignoreWriting: '写入中…',
         gitignoreNone: '没有选择任何分组。',
         gitignoreAdded: '已写入 {n} 条',
+        detected: '仓库里检测到这个技术栈',
+        covered: '已覆盖',
         pullDone: '已拉取',
         pushDone: '已推送',
         fetchDone: '已获取',
@@ -177,6 +184,7 @@ window.__ModuleLoader__.load({
         commit: 'Commit',
         committing: 'Committing…',
         pushAfter: 'Push after committing',
+        remote: 'Remote',
         push: 'Push',
         pull: 'Pull',
         fetch: 'Fetch',
@@ -197,6 +205,9 @@ window.__ModuleLoader__.load({
         clean: 'The working tree is clean',
         noChanges: 'No changes',
         truncated: 'Patch truncated',
+        moreContext: 'Show more context',
+        lessContext: 'Collapse to default context',
+        emptyPatch: 'This file has no diff to show.',
         nothingStaged: 'Nothing is staged yet.',
         explain: 'Explain change',
         explaining: 'Summarizing…',
@@ -218,7 +229,8 @@ window.__ModuleLoader__.load({
         rollbackWarning:
           'Undoing a commit that was already pushed rewrites published history; pushing afterwards needs --force-with-lease.',
         rollbackConfirm: 'Confirm',
-        language: 'Commit message language',
+        language: 'Language for messages and explanations',
+        languageHint: 'Both the commit message and “Explain change” use this setting.',
         langAuto: "Follow the repository's commits",
         langEn: 'English',
         langZh: 'Simplified Chinese',
@@ -243,6 +255,8 @@ window.__ModuleLoader__.load({
         gitignoreWriting: 'Writing…',
         gitignoreNone: 'No group is selected.',
         gitignoreAdded: 'Wrote {n} entries',
+        detected: 'Detected in this repository',
+        covered: 'covered',
         pullDone: 'Pulled',
         pushDone: 'Pushed',
         fetchDone: 'Fetched',
@@ -291,99 +305,269 @@ window.__ModuleLoader__.load({
     /** Wait, bounded by the caller's own cancellation checks. */
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    /** The inline Git glyph, drawn with `currentColor` so it follows the theme. */
-    function GitIcon({ size = 16 }) {
+    /**
+     * The package mark: a commit graph drawn on a 24px grid.
+     *
+     * `currentColor` and a stroke that stays proportional at every size, so the
+     * chip, the panel header, the guide card, and the empty state all read as
+     * the same mark and follow the active theme without a second asset.
+     */
+    function GitIcon({ size = 16, muted = false }) {
       return h(
         'svg',
         {
           width: size,
           height: size,
-          viewBox: '0 0 64 64',
+          viewBox: '0 0 24 24',
           fill: 'none',
           stroke: 'currentColor',
-          strokeWidth: 6,
+          strokeWidth: 1.7,
           strokeLinecap: 'round',
+          strokeLinejoin: 'round',
           'aria-hidden': true,
-          style: { display: 'block', flex: '0 0 auto' },
+          style: { display: 'block', flex: '0 0 auto', opacity: muted ? 0.55 : 1 },
         },
-        h('path', { d: 'M32 14v17' }),
-        h('path', { d: 'M32 31 19 44' }),
-        h('path', { d: 'M32 31v13' }),
-        h('circle', { cx: 32, cy: 12, r: 5, fill: 'currentColor', stroke: 'none' }),
-        h('circle', { cx: 19, cy: 48, r: 5, fill: 'currentColor', stroke: 'none' }),
-        h('circle', { cx: 32, cy: 48, r: 5, fill: 'currentColor', stroke: 'none' }),
+        h('path', { d: 'M6.5 8.2v7.6' }),
+        h('path', { d: 'M17.5 10.9v.6a4.2 4.2 0 0 1-4.2 4.2H12' }),
+        h('circle', { cx: 6.5, cy: 5.7, r: 2.5 }),
+        h('circle', { cx: 6.5, cy: 18.3, r: 2.5 }),
+        h('circle', { cx: 17.5, cy: 8.4, r: 2.5 }),
       );
     }
+
+    /**
+     * One stroked glyph on the shared 24px grid.
+     *
+     * The panel draws its own controls rather than importing a Harness UI
+     * package, so this is the whole icon set: `currentColor`, one stroke weight,
+     * one grid — which is what makes a row of actions read as designed instead
+     * of as punctuation.
+     */
+    function Glyph({ size = 14, children, style }) {
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 24 24',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.8,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          style: { display: 'block', flex: '0 0 auto', ...style },
+        },
+        children,
+      );
+    }
+
+    const IconRefresh = (p) =>
+      h(Glyph, p, h('path', { d: 'M20.5 12a8.5 8.5 0 1 1-2.5-6' }), h('path', { d: 'M20.5 4.5V10H15' }));
+    const IconSliders = (p) =>
+      h(
+        Glyph,
+        p,
+        h('path', { d: 'M4 8h16' }),
+        h('path', { d: 'M4 16h16' }),
+        h('circle', { cx: 10, cy: 8, r: 2.4, fill: 'var(--dsw-alias-bg-layer-1)' }),
+        h('circle', { cx: 15, cy: 16, r: 2.4, fill: 'var(--dsw-alias-bg-layer-1)' }),
+      );
+    const IconBack = (p) => h(Glyph, p, h('path', { d: 'M19 12H5' }), h('path', { d: 'm11 6-6 6 6 6' }));
+    const IconClose = (p) => h(Glyph, p, h('path', { d: 'M7 7l10 10' }), h('path', { d: 'M17 7 7 17' }));
+    const IconPlus = (p) => h(Glyph, p, h('path', { d: 'M12 6.5v11' }), h('path', { d: 'M6.5 12h11' }));
+    const IconMinus = (p) => h(Glyph, p, h('path', { d: 'M6.5 12h11' }));
+    const IconUndo = (p) =>
+      h(Glyph, p, h('path', { d: 'M4 10h9.5a5.5 5.5 0 0 1 0 11H9' }), h('path', { d: 'M8 6 4 10l4 4' }));
+    const IconChevron = ({ size = 12, up = false }) =>
+      h(Glyph, { size }, h('path', { d: up ? 'M6 15l6-6 6 6' : 'M6 9l6 6 6-6' }));
+    const IconPush = (p) =>
+      h(Glyph, p, h('path', { d: 'M12 19V6' }), h('path', { d: 'm6 12 6-6 6 6' }), h('path', { d: 'M5 21h14' }));
+    const IconPull = (p) =>
+      h(Glyph, p, h('path', { d: 'M12 5v13' }), h('path', { d: 'm6 12 6 6 6-6' }), h('path', { d: 'M5 3h14' }));
+    const IconFetch = (p) =>
+      h(Glyph, p, h('path', { d: 'M12 4v8' }), h('path', { d: 'm8.5 8.5 3.5 3.5 3.5-3.5' }), h('path', { d: 'M4.5 16a8 8 0 0 0 15 0' }));
+    const IconSpark = (p) =>
+      h(
+        Glyph,
+        p,
+        h('path', { d: 'M12 3.5l1.9 5.6 5.6 1.9-5.6 1.9L12 18.5l-1.9-5.6L4.5 11l5.6-1.9z' }),
+        h('path', { d: 'M18.5 4.5v3' }),
+        h('path', { d: 'M17 6h3' }),
+      );
+    const IconBubble = (p) =>
+      h(
+        Glyph,
+        p,
+        h('path', { d: 'M20 13.5a2.5 2.5 0 0 1-2.5 2.5H10l-4 3.5v-3.5H6.5A2.5 2.5 0 0 1 4 13.5v-6A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5z' }),
+        h('path', { d: 'M8.5 9.5h7' }),
+        h('path', { d: 'M8.5 12.5h4' }),
+      );
+    const IconTrash = (p) =>
+      h(Glyph, p, h('path', { d: 'M4.5 7h15' }), h('path', { d: 'M9.5 7V4.8h5V7' }), h('path', { d: 'M6.5 7l1 12.2h9L17.5 7' }));
+    const IconCheck = (p) => h(Glyph, p, h('path', { d: 'm5 12.5 4.5 4.5L19 7.5' }));
+    const IconCommit = (p) =>
+      h(Glyph, p, h('circle', { cx: 12, cy: 12, r: 3.6 }), h('path', { d: 'M12 3.5v4.9' }), h('path', { d: 'M12 15.6v4.9' }));
+    const IconSwitch = (p) =>
+      h(Glyph, p, h('path', { d: 'M4 6v6.5A3.5 3.5 0 0 0 7.5 16H19' }), h('path', { d: 'm15 12 4 4-4 4' }));
 
     /** The stylesheet the panel mounts with its own subtree, so unmounting removes it. */
     function PanelStyles() {
       return h('style', {
         children: `
-.dsg-root { display:flex; flex-direction:column; height:100%; min-height:0; color:var(--dsw-alias-label-primary); font-size:12px; }
-.dsg-bar { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--dsw-alias-border-l1); flex:0 0 auto; }
-.dsg-bar-main { display:flex; flex-direction:column; gap:2px; min-width:0; flex:1 1 auto; }
-.dsg-branch { display:flex; align-items:center; gap:6px; font-weight:600; font-size:12px; }
-.dsg-branch-btn { display:flex; align-items:center; gap:5px; min-width:0; appearance:none; border:1px solid transparent; background:none; color:inherit; font:inherit; font-weight:600; padding:2px 5px; border-radius:6px; cursor:pointer; max-width:100%; }
-.dsg-branch-btn:hover:not(:disabled) { border-color:var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); }
-.dsg-branch-btn:disabled { cursor:default; }
-.dsg-branch-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.dsg-caret { color:var(--dsw-alias-label-secondary); font-size:9px; }
-.dsg-meta { color:var(--dsw-alias-label-secondary); font-size:11px; display:flex; gap:8px; flex-wrap:wrap; padding-left:5px; }
-.dsg-badge { border:1px solid var(--dsw-alias-border-l1); border-radius:999px; padding:0 6px; font-size:10px; color:var(--dsw-alias-label-secondary); }
-.dsg-btn { appearance:none; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); border-radius:6px; padding:3px 8px; font-size:11px; line-height:1.6; cursor:pointer; font-family:inherit; white-space:nowrap; }
+.dsg-root { display:flex; flex-direction:column; height:100%; min-height:0; color:var(--dsw-alias-label-primary); font-size:12px; line-height:1.5; -webkit-font-smoothing:antialiased; position:relative; }
+/* The package's signature: a two-pixel brand rule across the top of the pane,
+   fading out so it reads as an accent rather than a border. Pure tokens, so it
+   follows the active theme and any brand colour the deployment sets. */
+.dsg-rule { flex:0 0 auto; height:2px; background:linear-gradient(90deg, var(--dsw-alias-brand-primary), transparent); }
+.dsg-root *, .dsg-root *::before, .dsg-root *::after { box-sizing:border-box; }
+
+/* header ------------------------------------------------------------------ */
+.dsg-hero { position:relative; overflow:hidden; display:flex; flex-direction:column; gap:7px; padding:10px; border-bottom:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-base); flex:0 0 auto; }
+/* A wash of the brand colour behind the header. Token-derived and very low
+   opacity, so it tints without changing any text's contrast. */
+.dsg-hero::before { content:''; position:absolute; inset:0; background:linear-gradient(180deg, var(--dsw-alias-brand-primary), transparent 58%); opacity:.05; pointer-events:none; }
+.dsg-hero > * { position:relative; }
+.dsg-hero-top { display:flex; align-items:center; gap:6px; min-width:0; }
+.dsg-hero-meta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding-left:2px; min-height:16px; }
+.dsg-upstream { color:var(--dsw-alias-label-secondary); font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:14em; }
+/* Deliberately plain: the branch name, a disclosure caret, and nothing else.
+   It reads as a control from its shape and hover state, not from decoration. */
+.dsg-branch-btn { display:inline-flex; align-items:center; gap:5px; min-width:0; max-width:100%; appearance:none; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); font:inherit; font-weight:600; font-size:12.5px; padding:0 9px; min-height:28px; border-radius:999px; cursor:pointer; transition:border-color .12s ease, background-color .12s ease; }
+.dsg-branch-btn:hover:not(:disabled) { border-color:var(--dsw-alias-border-l2); }
+.dsg-branch-btn:disabled { cursor:default; opacity:.7; }
+.dsg-branch-static { display:inline-flex; align-items:center; padding:0 9px; min-height:28px; font-weight:600; font-size:12.5px; border:1px solid var(--dsw-alias-border-l1); border-radius:999px; background:var(--dsw-alias-bg-layer-1); }
+.dsg-branch-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.dsg-badge { display:inline-flex; align-items:center; border:1px solid var(--dsw-alias-border-l1); border-radius:999px; padding:1px 7px; font-size:10px; color:var(--dsw-alias-label-secondary); }
+.dsg-badge-ahead { color:var(--dsw-alias-brand-primary); border-color:var(--dsw-alias-brand-primary); }
+.dsg-badge-behind { color:var(--dsw-alias-state-warn-primary); border-color:var(--dsw-alias-state-warn-primary); }
+
+/* controls ---------------------------------------------------------------- */
+.dsg-btn { appearance:none; display:inline-flex; align-items:center; justify-content:center; gap:5px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); border-radius:7px; padding:0 9px; min-height:26px; font-size:11px; line-height:1.5; cursor:pointer; font-family:inherit; white-space:nowrap; transition:background-color .12s ease, border-color .12s ease, opacity .12s ease; }
+/* Barely larger than a secondary control: enough to read as primary, not
+   enough to shout. */
+.dsg-btn-commit { min-height:28px; font-size:12px; padding:0 12px; border-radius:8px; }
+.dsg-sync { display:flex; align-items:center; gap:8px; }
+.dsg-sync .dsg-seg { flex:1 1 auto; }
+.dsg-seg { display:flex; }
+.dsg-btn-seg { border-radius:0; margin-left:-1px; flex:1 1 auto; }
+.dsg-btn-seg:first-child { border-radius:7px 0 0 7px; margin-left:0; }
+.dsg-btn-seg:last-child { border-radius:0 7px 7px 0; }
+.dsg-btn-seg:hover:not(:disabled) { position:relative; z-index:1; }
 .dsg-btn:hover:not(:disabled) { border-color:var(--dsw-alias-border-l2); }
-.dsg-btn:disabled { opacity:.5; cursor:default; }
+.dsg-btn:disabled { opacity:.45; cursor:default; }
 .dsg-btn-primary { background:var(--dsw-alias-brand-primary); border-color:var(--dsw-alias-brand-primary); color:var(--dsw-alias-bg-base); font-weight:600; }
 .dsg-btn-danger { color:var(--dsw-alias-state-error-primary); border-color:var(--dsw-alias-state-error-primary); }
-.dsg-btn-armed { background:var(--dsw-alias-state-error-primary); color:var(--dsw-alias-bg-base); font-weight:600; padding:2px 6px; font-size:10px; }
-.dsg-btn-icon { padding:2px 6px; font-size:12px; }
+.dsg-btn-armed { background:var(--dsw-alias-state-error-primary); color:var(--dsw-alias-bg-base); font-weight:600; padding:0 8px; font-size:10.5px; }
+.dsg-btn-icon { min-width:26px; padding:0 6px; font-size:12px; display:inline-flex; align-items:center; justify-content:center; }
 .dsg-btn-quiet { background:none; border-color:transparent; color:var(--dsw-alias-label-secondary); }
-.dsg-btn-quiet:hover:not(:disabled) { border-color:var(--dsw-alias-border-l1); color:var(--dsw-alias-label-primary); }
+.dsg-root button:focus-visible, .dsg-root input:focus-visible, .dsg-root select:focus-visible, .dsg-root textarea:focus-visible { outline:2px solid var(--dsw-alias-brand-primary); outline-offset:1px; }
+.dsg-btn-quiet:hover:not(:disabled) { border-color:var(--dsw-alias-border-l1); color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-layer-1); }
+.dsg-input { flex:1 1 auto; min-width:0; border:1px solid var(--dsw-alias-border-l1); border-radius:7px; background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary); font-size:11px; min-height:26px; padding:3px 8px; font-family:inherit; transition:border-color .12s ease; }
+.dsg-input:focus { outline:none; border-color:var(--dsw-alias-brand-primary); }
+.dsg-textarea { width:100%; resize:vertical; min-height:62px; border:1px solid var(--dsw-alias-border-l1); border-radius:8px; background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; line-height:1.6; padding:7px 8px; transition:border-color .12s ease; }
+.dsg-textarea:focus { outline:none; border-color:var(--dsw-alias-brand-primary); }
+.dsg-check { display:inline-flex; align-items:center; gap:5px; color:var(--dsw-alias-label-secondary); font-size:11px; cursor:pointer; user-select:none; }
+.dsg-field { display:flex; align-items:center; gap:6px; }
+.dsg-label { color:var(--dsw-alias-label-secondary); font-size:10.5px; letter-spacing:.02em; }
+
+/* layout ------------------------------------------------------------------ */
 .dsg-scroll { flex:1 1 auto; min-height:0; overflow:auto; }
-.dsg-section { border-bottom:1px solid var(--dsw-alias-border-l1); }
-.dsg-section-head { display:flex; align-items:center; gap:6px; padding:6px 10px; color:var(--dsw-alias-label-secondary); font-size:11px; position:sticky; top:0; background:var(--dsw-alias-bg-base); z-index:1; }
-.dsg-section-head b { color:var(--dsw-alias-label-primary); font-weight:600; }
-.dsg-row { display:flex; align-items:center; gap:6px; padding:3px 10px; }
+.dsg-section + .dsg-section { border-top:1px solid var(--dsw-alias-border-l1); }
+.dsg-section:last-child { border-bottom:1px solid var(--dsw-alias-border-l1); }
+.dsg-section-head { display:flex; align-items:center; gap:7px; padding:7px 10px 6px; color:var(--dsw-alias-label-secondary); font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; position:sticky; top:0; background:var(--dsw-alias-bg-base); z-index:1; }
+.dsg-section-head b { color:var(--dsw-alias-label-secondary); font-weight:600; }
+.dsg-count { min-width:18px; text-align:center; border-radius:999px; background:var(--dsw-alias-bg-base); border:1px solid currentColor; padding:0 5px; font-size:10px; letter-spacing:0; font-weight:600; }
+.dsg-spacer { flex:1 1 auto; }
+.dsg-dim { color:var(--dsw-alias-label-secondary); }
+
+/* change rows ------------------------------------------------------------- */
+.dsg-row { display:flex; align-items:center; gap:7px; padding:4px 10px; transition:background-color .1s ease; }
 .dsg-row:hover { background:var(--dsw-alias-bg-layer-1); }
 .dsg-row-active { background:var(--dsw-alias-bg-layer-1); box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary); }
-.dsg-status { flex:0 0 auto; width:14px; text-align:center; font-weight:700; font-size:11px; }
+/* The status letter carries its own colour: the row sets an inline color from
+   the change's kind, and currentColor makes the outline and glyph match. */
+.dsg-mark { flex:0 0 auto; width:17px; height:17px; border-radius:6px; border:1px solid currentColor; background:var(--dsw-alias-bg-base); display:inline-flex; align-items:center; justify-content:center; font-size:9.5px; font-weight:700; line-height:1; }
 .dsg-path { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; cursor:pointer; }
-.dsg-path:hover { text-decoration:underline; }
-.dsg-diff { border-bottom:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-2); }
-.dsg-diff-head { display:flex; align-items:center; gap:6px; padding:5px 10px; font-size:11px; color:var(--dsw-alias-label-secondary); background:var(--dsw-alias-bg-layer-2); }
-.dsg-diff-head b { color:var(--dsw-alias-label-primary); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.dsg-summary-title { padding:6px 10px 0; font-size:10px; letter-spacing:.04em; text-transform:uppercase; color:var(--dsw-alias-label-secondary); }
-.dsg-summary { margin:0; padding:4px 10px 8px; font-size:11px; line-height:1.6; white-space:pre-wrap; font-family:inherit; color:var(--dsw-alias-label-primary); border-bottom:1px dashed var(--dsw-alias-border-l1); }
-.dsg-diff-body { margin:0; padding:6px 10px 10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; line-height:1.5; white-space:pre; overflow-x:auto; }
-.dsg-add { color:var(--dsw-alias-state-success-primary); }
-.dsg-del { color:var(--dsw-alias-state-error-primary); }
-.dsg-hunk { color:var(--dsw-alias-brand-primary); }
-.dsg-dim { color:var(--dsw-alias-label-secondary); }
-.dsg-commit { flex:0 0 auto; border-top:1px solid var(--dsw-alias-border-l1); padding:8px 10px; display:flex; flex-direction:column; gap:6px; background:var(--dsw-alias-bg-base); }
-.dsg-textarea { width:100%; box-sizing:border-box; resize:vertical; min-height:56px; border:1px solid var(--dsw-alias-border-l1); border-radius:6px; background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; line-height:1.5; padding:6px; }
-.dsg-textarea:focus { outline:none; border-color:var(--dsw-alias-brand-primary); }
+.dsg-path:hover { text-decoration:underline; text-underline-offset:2px; }
+
+/* diff -------------------------------------------------------------------- */
+.dsg-diff { border-top:1px solid var(--dsw-alias-border-l1); border-left:2px solid var(--dsw-alias-brand-primary); background:var(--dsw-alias-bg-layer-2); }
+.dsg-diff-head { display:flex; align-items:center; gap:6px; padding:7px 10px; font-size:11px; color:var(--dsw-alias-label-secondary); border-bottom:1px solid var(--dsw-alias-border-l1); }
+.dsg-diff-head b { color:var(--dsw-alias-label-primary); font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.dsg-summary-title { display:flex; align-items:center; gap:6px; padding:9px 10px 0; font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--dsw-alias-label-secondary); }
+.dsg-summary-title::before { content:''; width:3px; height:11px; border-radius:2px; background:var(--dsw-alias-brand-primary); }
+.dsg-summary { margin:0; padding:6px 10px 10px; font-size:11.5px; line-height:1.7; white-space:pre-wrap; font-family:inherit; color:var(--dsw-alias-label-primary); border-bottom:1px dashed var(--dsw-alias-border-l1); }
+/* Diff view: two line-number gutters, a sign, then the text — the shape an
+   editor uses, so a reader can see what moved instead of parsing git's format.
+   Row tints come from color-mix over a status token, with a plain surface
+   colour declared first as the fallback; neither is a literal colour. */
+.dsg-diff-body { margin:0; padding:6px 0 10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; line-height:1.6; }
+.dsg-dline { display:flex; align-items:flex-start; padding:0 10px 0 0; }
+.dsg-dline:hover { background:var(--dsw-alias-bg-layer-1); }
+.dsg-dadd { background:var(--dsw-alias-bg-layer-2); background:color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent); }
+.dsg-ddel { background:var(--dsw-alias-bg-layer-2); background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent); }
+.dsg-dno { flex:0 0 34px; text-align:right; padding-right:7px; color:var(--dsw-alias-label-secondary); opacity:.7; user-select:none; }
+.dsg-dsign { flex:0 0 13px; text-align:center; user-select:none; }
+.dsg-dadd .dsg-dsign { color:var(--dsw-alias-state-success-primary); }
+.dsg-ddel .dsg-dsign { color:var(--dsw-alias-state-error-primary); }
+.dsg-dtext { flex:1 1 auto; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.dsg-dmark { border-radius:2px; background:var(--dsw-alias-bg-layer-2); background:color-mix(in srgb, currentColor 24%, transparent); }
+.dsg-dhunk { margin:6px 0 3px; padding:3px 10px; color:var(--dsw-alias-label-secondary); background:var(--dsw-alias-bg-base); border-top:1px solid var(--dsw-alias-border-l1); border-bottom:1px solid var(--dsw-alias-border-l1); white-space:pre-wrap; overflow-wrap:anywhere; }
+.dsg-dmeta { padding:2px 10px; color:var(--dsw-alias-label-secondary); white-space:pre-wrap; overflow-wrap:anywhere; }
+.dsg-stats { display:inline-flex; align-items:center; gap:5px; font-size:10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.dsg-stat-add { color:var(--dsw-alias-state-success-primary); }
+.dsg-stat-del { color:var(--dsw-alias-state-error-primary); }
+
+/* commit card ------------------------------------------------------------- */
+.dsg-commit { flex:0 0 auto; border-top:1px solid var(--dsw-alias-border-l1); padding:10px; display:flex; flex-direction:column; gap:8px; background:var(--dsw-alias-bg-base); }
+.dsg-card { display:flex; flex-direction:column; gap:8px; padding:9px; border:1px solid var(--dsw-alias-border-l1); border-radius:10px; background:var(--dsw-alias-bg-layer-1); }
 .dsg-actions { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-.dsg-spacer { flex:1 1 auto; }
-.dsg-check { display:flex; align-items:center; gap:4px; color:var(--dsw-alias-label-secondary); font-size:11px; cursor:pointer; }
-.dsg-note { padding:6px 10px; font-size:11px; border-radius:6px; margin:8px 10px; display:flex; flex-direction:column; gap:6px; }
-.dsg-note-error { background:var(--dsw-alias-bg-layer-1); border:1px solid var(--dsw-alias-state-error-primary); color:var(--dsw-alias-state-error-primary); }
-.dsg-note-ok { background:var(--dsw-alias-bg-layer-1); border:1px solid var(--dsw-alias-state-success-primary); color:var(--dsw-alias-state-success-primary); }
-.dsg-note-warn { background:var(--dsw-alias-bg-layer-1); border:1px solid var(--dsw-alias-state-warn-primary); color:var(--dsw-alias-label-primary); }
-.dsg-empty { padding:20px 14px; text-align:center; color:var(--dsw-alias-label-secondary); display:flex; flex-direction:column; gap:8px; align-items:center; }
-.dsg-field { display:flex; align-items:center; gap:6px; }
-.dsg-input { flex:1 1 auto; min-width:0; border:1px solid var(--dsw-alias-border-l1); border-radius:6px; background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary); font-size:11px; padding:3px 6px; font-family:inherit; }
-.dsg-input:focus { outline:none; border-color:var(--dsw-alias-brand-primary); }
-.dsg-label { color:var(--dsw-alias-label-secondary); font-size:11px; flex:0 0 auto; }
-.dsg-form { display:flex; flex-direction:column; gap:8px; padding:10px; }
-.dsg-form-row { display:flex; flex-direction:column; gap:4px; }
-.dsg-form-title { font-weight:600; font-size:11px; margin-top:2px; }
-.dsg-divider { border-top:1px solid var(--dsw-alias-border-l1); margin:4px 0; }
-.dsg-branch-panel { border-bottom:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); padding:6px 10px 8px; display:flex; flex-direction:column; gap:4px; max-height:45%; overflow:auto; flex:0 0 auto; }
-.dsg-branch-row { display:flex; align-items:center; gap:6px; font-size:11px; padding:2px 0; }
+.dsg-hint { color:var(--dsw-alias-label-secondary); font-size:10.5px; }
+
+/* notices ----------------------------------------------------------------- */
+.dsg-note { padding:8px 10px; font-size:11px; line-height:1.6; border-radius:8px; margin:8px 10px 0; display:flex; flex-direction:column; gap:7px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); }
+.dsg-note-error { border-color:var(--dsw-alias-state-error-primary); color:var(--dsw-alias-state-error-primary); }
+.dsg-note-ok { border-color:var(--dsw-alias-state-success-primary); color:var(--dsw-alias-state-success-primary); }
+.dsg-note-warn { border-color:var(--dsw-alias-state-warn-primary); color:var(--dsw-alias-label-primary); }
+
+/* empty states ------------------------------------------------------------ */
+.dsg-empty { padding:26px 18px; text-align:center; color:var(--dsw-alias-label-secondary); display:flex; flex-direction:column; gap:8px; align-items:center; }
+.dsg-empty-mark { color:var(--dsw-alias-brand-primary); opacity:.6; }
+.dsg-empty-title { color:var(--dsw-alias-label-primary); font-size:12.5px; font-weight:600; }
+.dsg-empty-text { font-size:11px; line-height:1.7; max-width:26em; }
+
+/* branch popover ---------------------------------------------------------- */
+.dsg-popover { margin:8px 10px; border:1px solid var(--dsw-alias-border-l1); border-radius:12px; background:var(--dsw-alias-bg-overlay); display:flex; flex-direction:column; min-height:0; max-height:52%; flex:0 0 auto; overflow:hidden; }
+.dsg-popover-head { display:flex; align-items:center; gap:6px; padding:8px 9px 7px; border-bottom:1px solid var(--dsw-alias-border-l1); }
+.dsg-popover-title { flex:1 1 auto; font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--dsw-alias-label-secondary); font-weight:600; }
+.dsg-popover-list { display:flex; flex-direction:column; gap:1px; padding:5px; overflow:auto; min-height:0; }
+.dsg-popover-foot { display:flex; align-items:center; gap:6px; padding:7px 9px; border-top:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); }
+.dsg-branch-row { display:flex; align-items:center; gap:7px; padding:5px 7px; border-radius:8px; font-size:11.5px; }
+.dsg-branch-row:hover { background:var(--dsw-alias-bg-layer-1); }
+.dsg-branch-row-current { background:var(--dsw-alias-bg-layer-1); }
+.dsg-branch-row-current .dsg-branch-row-name { font-weight:600; }
+.dsg-branch-lead { flex:0 0 auto; width:14px; display:inline-flex; align-items:center; justify-content:center; color:var(--dsw-alias-label-secondary); }
 .dsg-branch-row-name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; cursor:pointer; }
-.dsg-branch-row-name:hover { text-decoration:underline; }
-.dsg-branch-current { color:var(--dsw-alias-brand-primary); font-weight:600; cursor:default; }
+.dsg-branch-row-name:hover { text-decoration:underline; text-underline-offset:2px; }
+.dsg-branch-current { cursor:default; }
 .dsg-branch-current:hover { text-decoration:none; }
+.dsg-branch-track { flex:0 0 auto; color:var(--dsw-alias-label-secondary); font-size:10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+/* Row actions stay out of the way until the row is pointed at or focused. */
+.dsg-btn-reveal { opacity:0; transition:opacity .12s ease; }
+.dsg-branch-row:hover .dsg-btn-reveal, .dsg-btn-reveal:focus-visible { opacity:1; }
+.dsg-count-quiet { color:var(--dsw-alias-label-secondary); }
+
+/* settings ---------------------------------------------------------------- */
+.dsg-form { display:flex; flex-direction:column; gap:9px; padding:10px; }
+.dsg-form-row { display:flex; flex-direction:column; gap:5px; }
+.dsg-form-title { display:flex; align-items:center; gap:6px; font-weight:600; font-size:11px; letter-spacing:.02em; }
+.dsg-form-title::before { content:''; width:3px; height:11px; border-radius:2px; background:var(--dsw-alias-brand-primary); }
+.dsg-divider { border-top:1px solid var(--dsw-alias-border-l1); margin:3px 0; }
+.dsg-group-grid { display:flex; flex-direction:column; gap:2px; }
+.dsg-group-row { display:flex; align-items:center; gap:7px; padding:3px 5px; border-radius:7px; font-size:11px; cursor:pointer; }
+.dsg-group-row:hover { background:var(--dsw-alias-bg-layer-1); }
+.dsg-dot { width:5px; height:5px; border-radius:50%; background:var(--dsw-alias-state-success-primary); flex:0 0 auto; }
 `,
       });
     }
@@ -394,7 +578,7 @@ window.__ModuleLoader__.load({
         return h(
           'span',
           { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
-          h(GitIcon, { size: 14 }),
+          h(GitIcon, { size: 16 }),
           h('span', null, t('tab')),
         );
       };
@@ -435,30 +619,45 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** The unified patch, one coloured span per line. */
-    function DiffBody({ patch }) {
-      const lines = useMemo(() => patch.split('\n'), [patch]);
+    /** One piece of a line, marking the changed span when the Host found one. */
+    function lineText(text, inline) {
+      if (!inline) return text === '' ? ' ' : text;
+      return [
+        inline[0],
+        inline[1] === '' ? null : h('span', { className: 'dsg-dmark', key: 'mark' }, inline[1]),
+        inline[2],
+      ];
+    }
+
+    /**
+     * The patch as a diff view: two line-number gutters, a sign, then the text.
+     *
+     * The Host parses the unified diff into rows and marks the span that changed
+     * within a replaced line; this draws them. Row tints come from `color-mix`
+     * over a status token, with a plain surface colour declared first as the
+     * fallback — neither is a literal colour.
+     */
+    function DiffBody({ rows }) {
+      if (!Array.isArray(rows) || rows.length === 0) return h('div', { className: 'dsg-empty' }, t('emptyPatch'));
       return h(
-        'pre',
+        'div',
         { className: 'dsg-diff-body' },
-        lines.map((line, index) =>
-          h(
+        rows.map((row, index) => {
+          if (row.kind === 'hunk') {
+            return h('div', { className: 'dsg-dhunk', key: index }, row.text === '' ? '@@' : row.text);
+          }
+          if (row.kind === 'meta') return h('div', { className: 'dsg-dmeta', key: index }, row.text);
+          const className =
+            row.kind === 'add' ? 'dsg-dline dsg-dadd' : row.kind === 'del' ? 'dsg-dline dsg-ddel' : 'dsg-dline';
+          return h(
             'div',
-            {
-              key: index,
-              className: line.startsWith('+')
-                ? 'dsg-add'
-                : line.startsWith('-')
-                  ? 'dsg-del'
-                  : line.startsWith('@@')
-                    ? 'dsg-hunk'
-                    : line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')
-                      ? 'dsg-dim'
-                      : undefined,
-            },
-            line === '' ? ' ' : line,
-          ),
-        ),
+            { className, key: index },
+            h('span', { className: 'dsg-dno' }, row.oldNo === undefined ? '' : String(row.oldNo)),
+            h('span', { className: 'dsg-dno' }, row.newNo === undefined ? '' : String(row.newNo)),
+            h('span', { className: 'dsg-dsign' }, row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ''),
+            h('span', { className: 'dsg-dtext' }, lineText(row.text, row.inline)),
+          );
+        }),
       );
     }
 
@@ -471,7 +670,7 @@ window.__ModuleLoader__.load({
         { className: `dsg-row${active ? ' dsg-row-active' : ''}` },
         h(
           'span',
-          { className: 'dsg-status', style: { color: colourFor(entry.status) }, title: entry.status },
+          { className: 'dsg-mark', style: { color: colourFor(entry.status) }, title: entry.status },
           markFor(entry.status),
         ),
         h(
@@ -492,7 +691,7 @@ window.__ModuleLoader__.load({
             title: isStaged ? t('unstage') : t('stage'),
             onClick: () => onAction(isStaged ? 'unstage' : 'add', [entry.path]),
           },
-          isStaged ? '−' : '+',
+          isStaged ? h(IconMinus, { size: 13 }) : h(IconPlus, { size: 13 }),
         ),
         isStaged
           ? null
@@ -505,7 +704,7 @@ window.__ModuleLoader__.load({
                 title: armed ? t('confirmDiscard') : t('discard'),
                 onClick: () => onAction('discard', [entry.path], true),
               },
-              armed ? t('confirmDiscard') : '⟲',
+              armed ? t('confirmDiscard') : h(IconUndo, { size: 13 }),
             ),
       );
     }
@@ -538,6 +737,7 @@ window.__ModuleLoader__.load({
         const [settings, setSettings] = useState(null);
         const [draft, setDraft] = useState(null);
         const [ignorePlan, setIgnorePlan] = useState(null);
+        const [wideContext, setWideContext] = useState(false);
         const [ignoreChoice, setIgnoreChoice] = useState(null);
         const mounted = useRef(true);
         const ignoreRef = useRef(null);
@@ -621,11 +821,16 @@ window.__ModuleLoader__.load({
         );
 
         const openDiff = useCallback(
-          async (scope, path) => {
+          async (scope, path, context) => {
             setOpen({ scope, path });
             setPatch(null);
             setSummary(null);
-            const answer = await request('diff', { scope, paths: [path], maxBytes: DIFF_CHAR_CAP });
+            const answer = await request('diff', {
+              scope,
+              paths: [path],
+              maxBytes: DIFF_CHAR_CAP,
+              ...(context ? { contextLines: context } : {}),
+            });
             if (!mounted.current) return;
             if (answer.error) {
               setError(answer.error);
@@ -896,12 +1101,18 @@ window.__ModuleLoader__.load({
         const groups = useMemo(() => {
           if (!status?.isRepo) return [];
           return [
-            { key: 'conflicted', label: t('conflicted'), entries: status.conflicted ?? [] },
-            { key: 'staged', label: t('staged'), entries: status.staged ?? [] },
-            { key: 'changes', label: t('changes'), entries: status.unstaged ?? [] },
+            {
+              key: 'conflicted',
+              label: t('conflicted'),
+              tone: 'var(--dsw-alias-state-error-primary)',
+              entries: status.conflicted ?? [],
+            },
+            { key: 'staged', label: t('staged'), tone: 'var(--dsw-alias-state-success-primary)', entries: status.staged ?? [] },
+            { key: 'changes', label: t('changes'), tone: 'var(--dsw-alias-state-warn-primary)', entries: status.unstaged ?? [] },
             {
               key: 'untracked',
               label: t('untracked'),
+              tone: 'var(--dsw-alias-brand-primary)',
               entries: (status.untracked ?? []).map((path) => ({ path, status: 'added' })),
             },
           ].filter((group) => group.entries.length > 0);
@@ -912,123 +1123,157 @@ window.__ModuleLoader__.load({
 
         const header = h(
           'div',
-          { className: 'dsg-bar' },
+          { className: 'dsg-hero' },
           h(
             'div',
-            { className: 'dsg-bar-main' },
-            h(
-              'div',
-              { className: 'dsg-branch' },
-              status?.isRepo
-                ? h(
-                    'button',
-                    { type: 'button', className: 'dsg-branch-btn', disabled, onClick: () => void toggleBranches() },
-                    h(GitIcon, { size: 13 }),
-                    h(
-                      'span',
-                      { className: 'dsg-branch-name' },
-                      status.branch || (status.detached ? `detached @ ${status.head}` : t('notRepo')),
-                    ),
-                    h('span', { className: 'dsg-caret' }, branchOpen ? '▲' : '▼'),
-                  )
-                : h(Fragment, null, h(GitIcon, { size: 13 }), h('span', { className: 'dsg-branch-name' }, t('notRepo'))),
-            ),
+            { className: 'dsg-hero-top' },
             status?.isRepo
               ? h(
-                  'div',
-                  { className: 'dsg-meta' },
-                  h('span', null, status.upstream ? `${t('upstream')} ${status.upstream}` : t('noUpstream')),
-                  status.ahead > 0
-                    ? h('span', { className: 'dsg-badge' }, t('ahead').replace('{n}', String(status.ahead)))
-                    : null,
-                  status.behind > 0
-                    ? h('span', { className: 'dsg-badge' }, t('behind').replace('{n}', String(status.behind)))
-                    : null,
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsg-branch-btn',
+                    disabled,
+                    onClick: () => void toggleBranches(),
+                  },
+                  h(
+                    'span',
+                    { className: 'dsg-branch-name' },
+                    status.branch || (status.detached ? `detached @ ${status.head}` : t('notRepo')),
+                  ),
+                  h(IconChevron, { size: 12, up: branchOpen }),
                 )
-              : null,
-          ),
-          h(
-            'button',
-            {
-              type: 'button',
-              className: 'dsg-btn dsg-btn-icon',
-              disabled,
-              title: t('refresh'),
-              onClick: () => void refresh(false),
-            },
-            '⟳',
-          ),
-          h(
-            'button',
-            {
-              type: 'button',
-              className: `dsg-btn dsg-btn-icon${view === 'settings' ? ' dsg-btn-primary' : ''}`,
-              disabled,
-              title: view === 'settings' ? t('back') : t('settings'),
-              onClick: () => {
-                if (view === 'settings') {
-                  setView('changes');
-                  void refresh(true);
-                } else {
-                  void openSettings();
-                }
+              : h(
+                  'div',
+                  { className: 'dsg-branch-static' },
+                  h('span', { className: 'dsg-branch-name' }, t('notRepo')),
+                ),
+            h('span', { className: 'dsg-spacer' }),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsg-btn dsg-btn-icon dsg-btn-quiet',
+                disabled,
+                title: t('refresh'),
+                onClick: () => void refresh(false),
               },
-            },
-            view === 'settings' ? '←' : '⚙',
+              h(IconRefresh, { size: 15 }),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: `dsg-btn dsg-btn-icon${view === 'settings' ? ' dsg-btn-primary' : ' dsg-btn-quiet'}`,
+                disabled,
+                title: view === 'settings' ? t('back') : t('settings'),
+                onClick: () => {
+                  if (view === 'settings') {
+                    setView('changes');
+                    void refresh(true);
+                  } else {
+                    void openSettings();
+                  }
+                },
+              },
+              view === 'settings' ? h(IconBack, { size: 15 }) : h(IconSliders, { size: 15 }),
+            ),
           ),
+          status?.isRepo
+            ? h(
+                'div',
+                { className: 'dsg-hero-meta' },
+                status.upstream
+                  ? h('span', { className: 'dsg-upstream' }, status.upstream)
+                  : h('span', { className: 'dsg-hint' }, t('noUpstream')),
+                status.ahead > 0
+                  ? h('span', { className: 'dsg-badge dsg-badge-ahead' }, t('ahead').replace('{n}', String(status.ahead)))
+                  : null,
+                status.behind > 0
+                  ? h('span', { className: 'dsg-badge dsg-badge-behind' }, t('behind').replace('{n}', String(status.behind)))
+                  : null,
+                status.clean ? h('span', { className: 'dsg-hint' }, t('clean')) : null,
+              )
+            : null,
         );
 
         const branchPanel =
           branchOpen && status?.isRepo
             ? h(
                 'div',
-                { className: 'dsg-branch-panel' },
-                h('div', { className: 'dsg-dim' }, t('localBranches')),
-                (branches ?? []).map((entry) =>
-                  h(
-                    'div',
-                    { className: 'dsg-branch-row', key: entry.name },
+                { className: 'dsg-popover' },
+                h(
+                  'div',
+                  { className: 'dsg-popover-head' },
+                  h('span', { className: 'dsg-popover-title' }, t('localBranches')),
+                  h('span', { className: 'dsg-count dsg-count-quiet' }, String((branches ?? []).length)),
+                ),
+                h(
+                  'div',
+                  { className: 'dsg-popover-list' },
+                  (branches ?? []).map((entry) =>
                     h(
-                      'span',
+                      'div',
                       {
-                        className: `dsg-branch-row-name${entry.current ? ' dsg-branch-current' : ''}`,
-                        title: entry.current ? t('currentBranch') : t('switchTo'),
-                        onClick: () => {
-                          if (!entry.current) void switchBranch(entry.name);
-                        },
+                        className: `dsg-branch-row${entry.current ? ' dsg-branch-row-current' : ''}`,
+                        key: entry.name,
                       },
-                      `${entry.current ? '● ' : '  '}${entry.name}${entry.track ? ` ${entry.track}` : ''}`,
+                      h(
+                        'span',
+                        { className: 'dsg-branch-lead' },
+                        entry.current ? h(IconCheck, { size: 13 }) : null,
+                      ),
+                      h(
+                        'span',
+                        {
+                          className: `dsg-branch-row-name${entry.current ? ' dsg-branch-current' : ''}`,
+                          title: entry.current ? t('currentBranch') : t('switchTo'),
+                          onClick: () => {
+                            if (!entry.current) void switchBranch(entry.name);
+                          },
+                        },
+                        entry.name,
+                      ),
+                      entry.track ? h('span', { className: 'dsg-branch-track' }, entry.track) : null,
+                      entry.current
+                        ? null
+                        : h(
+                            Fragment,
+                            null,
+                            h(
+                              'button',
+                              {
+                                type: 'button',
+                                className: 'dsg-btn dsg-btn-icon dsg-btn-quiet dsg-btn-reveal',
+                                disabled,
+                                title: t('switchTo'),
+                                onClick: () => void switchBranch(entry.name),
+                              },
+                              h(IconSwitch, { size: 13 }),
+                            ),
+                            h(
+                              'button',
+                              {
+                                type: 'button',
+                                className: `dsg-btn dsg-btn-icon dsg-btn-quiet dsg-btn-reveal${
+                                  confirming === `delete:${entry.name}` ? ' dsg-btn-armed' : ''
+                                }`,
+                                disabled,
+                                title:
+                                  confirming === `delete:${entry.name}` ? t('confirmDeleteBranch') : t('deleteBranch'),
+                                onClick: () => void deleteBranch(entry.name),
+                              },
+                              confirming === `delete:${entry.name}`
+                                ? t('confirmDeleteBranch')
+                                : h(IconTrash, { size: 13 }),
+                            ),
+                          ),
                     ),
-                    entry.current
-                      ? h('span', { className: 'dsg-dim' }, t('currentBranch'))
-                      : h(
-                          Fragment,
-                          null,
-                          h(
-                            'button',
-                            {
-                              type: 'button',
-                              className: `dsg-btn dsg-btn-icon dsg-btn-danger${
-                                confirming === `delete:${entry.name}` ? ' dsg-btn-armed' : ''
-                              }`,
-                              disabled,
-                              title:
-                                confirming === `delete:${entry.name}` ? t('confirmDeleteBranch') : t('deleteBranch'),
-                              onClick: () => void deleteBranch(entry.name),
-                            },
-                            confirming === `delete:${entry.name}` ? t('confirmDeleteBranch') : '×',
-                          ),
-                          h(
-                            'button',
-                            { type: 'button', className: 'dsg-btn', disabled, onClick: () => void switchBranch(entry.name) },
-                            t('switchTo'),
-                          ),
-                        ),
                   ),
                 ),
                 h(
                   'div',
-                  { className: 'dsg-field' },
+                  { className: 'dsg-popover-foot' },
                   h('input', {
                     className: 'dsg-input',
                     placeholder: t('newBranchPlaceholder'),
@@ -1044,6 +1289,7 @@ window.__ModuleLoader__.load({
                       disabled: disabled || newBranch.trim() === '',
                       onClick: () => void createBranch(),
                     },
+                    h(IconPlus, { size: 13 }),
                     busy === 'createBranch' ? t('creating') : t('create'),
                   ),
                 ),
@@ -1053,9 +1299,9 @@ window.__ModuleLoader__.load({
         const emptyState = h(
           'div',
           { className: 'dsg-empty' },
-          h(GitIcon, { size: 28 }),
-          h('div', null, t('notRepo')),
-          h('div', { className: 'dsg-dim' }, t('notRepoHint')),
+          h('span', { className: 'dsg-empty-mark' }, h(GitIcon, { size: 38 })),
+          h('div', { className: 'dsg-empty-title' }, t('notRepo')),
+          h('div', { className: 'dsg-empty-text' }, t('notRepoHint')),
           h(
             'button',
             {
@@ -1111,34 +1357,60 @@ window.__ModuleLoader__.load({
           ),
         );
 
-        /** The patch and, once asked for, the plain-language summary. */
-        const diffPane = (entry) =>
-          h(
+        /** The patch, and once asked for, the plain-language summary above it. */
+        const diffPane = (entry) => {
+          const stats = (patch?.files ?? []).find((file) => file.path === entry.path) ?? patch?.files?.[0];
+          return h(
             'div',
             { className: 'dsg-diff' },
             h(
               'div',
               { className: 'dsg-diff-head' },
               h('b', null, entry.path),
+              stats
+                ? h(
+                    'span',
+                    { className: 'dsg-stats' },
+                    h('span', { className: 'dsg-stat-add' }, `+${stats.additions ?? 0}`),
+                    h('span', { className: 'dsg-stat-del' }, `−${stats.deletions ?? 0}`),
+                  )
+                : null,
               h('span', { className: 'dsg-spacer' }),
-              patch?.truncated ? h('span', { className: 'dsg-dim' }, t('truncated')) : null,
+              patch?.truncated ? h('span', { className: 'dsg-hint' }, t('truncated')) : null,
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsg-btn dsg-btn-icon dsg-btn-quiet',
+                  disabled,
+                  title: wideContext ? t('lessContext') : t('moreContext'),
+                  onClick: () => {
+                    const next = !wideContext;
+                    setWideContext(next);
+                    void openDiff(open.scope, entry.path, next ? 24 : 3);
+                  },
+                },
+                wideContext ? h(IconMinus, { size: 14 }) : h(IconPlus, { size: 14 }),
+              ),
               h(
                 'button',
                 { type: 'button', className: 'dsg-btn', disabled, onClick: () => void explain() },
+                h(IconBubble, { size: 13 }),
                 busy === 'explain' ? t('explaining') : t('explain'),
               ),
               h(
                 'button',
                 {
                   type: 'button',
-                  className: 'dsg-btn dsg-btn-icon',
+                  className: 'dsg-btn dsg-btn-icon dsg-btn-quiet',
+                  title: t('close'),
                   onClick: () => {
                     setOpen(null);
                     setPatch(null);
                     setSummary(null);
                   },
                 },
-                '✕',
+                h(IconClose, { size: 14 }),
               ),
             ),
             summary !== null && summary.path === entry.path
@@ -1149,8 +1421,9 @@ window.__ModuleLoader__.load({
                   h('pre', { className: 'dsg-summary' }, summary.text),
                 )
               : null,
-            patch === null ? h('div', { className: 'dsg-empty' }, t('working')) : h(DiffBody, { patch: patch.patch || '' }),
+            patch === null ? h('div', { className: 'dsg-empty' }, t('working')) : h(DiffBody, { rows: patch.rows }),
           );
+        };
 
         const changes = h(
           'div',
@@ -1164,7 +1437,11 @@ window.__ModuleLoader__.load({
                 'div',
                 { className: 'dsg-section-head' },
                 h('b', null, group.label),
-                h('span', null, String(group.entries.length)),
+                h(
+                  'span',
+                  { className: 'dsg-count', style: { color: group.tone } },
+                  String(group.entries.length),
+                ),
                 h('span', { className: 'dsg-spacer' }),
                 group.key === 'staged'
                   ? h(
@@ -1259,65 +1536,107 @@ window.__ModuleLoader__.load({
         const commitBox = h(
           'div',
           { className: 'dsg-commit' },
-          h('textarea', {
-            className: 'dsg-textarea',
-            rows: 3,
-            placeholder: t('messagePlaceholder'),
-            value: message,
-            onChange: (event) => setMessage(event.target.value),
-            'aria-label': t('commitMessage'),
-          }),
           h(
             'div',
-            { className: 'dsg-actions' },
+            { className: 'dsg-card' },
+            h('textarea', {
+              className: 'dsg-textarea',
+              rows: 3,
+              placeholder: t('messagePlaceholder'),
+              value: message,
+              onChange: (event) => setMessage(event.target.value),
+              'aria-label': t('commitMessage'),
+            }),
+            // Secondary controls first: ask the model for a message, or queue a push.
             h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsg-btn',
-                disabled: disabled || stagedCount === 0,
-                onClick: () => void generate(),
-              },
-              busy === 'generate' ? t('generating') : t('generate'),
+              'div',
+              { className: 'dsg-actions' },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsg-btn',
+                  disabled: disabled || stagedCount === 0,
+                  onClick: () => void generate(),
+                },
+                h(IconSpark, { size: 13 }),
+                busy === 'generate' ? t('generating') : t('generate'),
+              ),
+              h('span', { className: 'dsg-spacer' }),
+              // The primary action sits at the card's trailing edge, sized like
+              // every other control so the panel keeps one rhythm.
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsg-btn dsg-btn-primary dsg-btn-commit',
+                  disabled: disabled || stagedCount === 0,
+                  onClick: () => void commit(),
+                },
+                h(IconCommit, { size: 14 }),
+                busy === 'commit' ? t('committing') : t('commit'),
+              ),
             ),
             h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsg-btn dsg-btn-primary',
-                disabled: disabled || stagedCount === 0,
-                onClick: () => void commit(),
-              },
-              busy === 'commit' ? t('committing') : t('commit'),
+              'div',
+              { className: 'dsg-actions' },
+              h(
+                'label',
+                { className: 'dsg-check' },
+                h('input', {
+                  type: 'checkbox',
+                  checked: pushAfter,
+                  onChange: (event) => setPushAfter(event.target.checked),
+                }),
+                t('pushAfter'),
+              ),
+              h('span', { className: 'dsg-spacer' }),
+              stagedCount === 0 ? h('span', { className: 'dsg-hint' }, t('nothingStaged')) : null,
             ),
-            h('span', { className: 'dsg-spacer' }),
+            h('div', { className: 'dsg-divider' }),
+            // Remote work is its own labelled group, not a third row of buttons.
             h(
-              'label',
-              { className: 'dsg-check' },
-              h('input', { type: 'checkbox', checked: pushAfter, onChange: (event) => setPushAfter(event.target.checked) }),
-              t('pushAfter'),
+              'div',
+              { className: 'dsg-sync' },
+              h('span', { className: 'dsg-label' }, t('remote')),
+              h(
+                'div',
+                { className: 'dsg-seg' },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsg-btn dsg-btn-seg',
+                    disabled,
+                    onClick: () => void act('push', 'sync', { action: 'push' }, () => t('pushDone')),
+                  },
+                  h(IconPush, { size: 13 }),
+                  t('push'),
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsg-btn dsg-btn-seg',
+                    disabled,
+                    onClick: () => void act('pull', 'sync', { action: 'pull' }, () => t('pullDone')),
+                  },
+                  h(IconPull, { size: 13 }),
+                  t('pull'),
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsg-btn dsg-btn-seg',
+                    disabled,
+                    onClick: () => void act('fetch', 'sync', { action: 'fetch' }, () => t('fetchDone')),
+                  },
+                  h(IconFetch, { size: 13 }),
+                  t('fetch'),
+                ),
+              ),
             ),
-          ),
-          h(
-            'div',
-            { className: 'dsg-actions' },
-            h(
-              'button',
-              { type: 'button', className: 'dsg-btn', disabled, onClick: () => void act('push', 'sync', { action: 'push' }, () => t('pushDone')) },
-              t('push'),
-            ),
-            h(
-              'button',
-              { type: 'button', className: 'dsg-btn', disabled, onClick: () => void act('pull', 'sync', { action: 'pull' }, () => t('pullDone')) },
-              t('pull'),
-            ),
-            h(
-              'button',
-              { type: 'button', className: 'dsg-btn', disabled, onClick: () => void act('fetch', 'sync', { action: 'fetch' }, () => t('fetchDone')) },
-              t('fetch'),
-            ),
-            h('span', { className: 'dsg-spacer' }),
-            stagedCount === 0 ? h('span', { className: 'dsg-dim' }, t('nothingStaged')) : null,
           ),
           rollbackRow,
         );
@@ -1341,15 +1660,20 @@ window.__ModuleLoader__.load({
                   field(
                     t('language'),
                     h(
-                      'select',
-                      {
-                        className: 'dsg-input',
-                        value: draft.messageLanguage,
-                        onChange: (event) => setDraft({ ...draft, messageLanguage: event.target.value }),
-                      },
-                      h('option', { value: 'auto' }, t('langAuto')),
-                      h('option', { value: 'en' }, t('langEn')),
-                      h('option', { value: 'zh' }, t('langZh')),
+                      Fragment,
+                      null,
+                      h(
+                        'select',
+                        {
+                          className: 'dsg-input',
+                          value: draft.messageLanguage,
+                          onChange: (event) => setDraft({ ...draft, messageLanguage: event.target.value }),
+                        },
+                        h('option', { value: 'auto' }, t('langAuto')),
+                        h('option', { value: 'en' }, t('langEn')),
+                        h('option', { value: 'zh' }, t('langZh')),
+                      ),
+                      h('span', { className: 'dsg-hint' }, t('languageHint')),
                     ),
                   ),
                   field(
@@ -1432,10 +1756,13 @@ window.__ModuleLoader__.load({
                     : h(
                         Fragment,
                         null,
-                        (ignorePlan.groups ?? []).map((group) =>
+                        h(
+                          'div',
+                          { className: 'dsg-group-grid' },
+                          (ignorePlan.groups ?? []).map((group) =>
                           h(
                             'label',
-                            { className: 'dsg-check', key: group.id },
+                            { className: 'dsg-group-row', key: group.id },
                             h('input', {
                               type: 'checkbox',
                               checked: ignoreChoice?.has(group.id) === true,
@@ -1446,7 +1773,11 @@ window.__ModuleLoader__.load({
                                 setIgnoreChoice(next);
                               },
                             }),
-                            `${group.label}${group.detected ? ' ●' : ''}${group.missing === 0 ? '' : ` (+${group.missing})`}`,
+                            h('span', null, group.label),
+                            group.detected ? h('span', { className: 'dsg-dot', title: t('detected') }) : null,
+                            h('span', { className: 'dsg-spacer' }),
+                            h('span', { className: 'dsg-hint' }, group.missing === 0 ? t('covered') : `+${group.missing}`),
+                            ),
                           ),
                         ),
                         h(
@@ -1466,6 +1797,7 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'dsg-root', 'data-plugin': 'dsh-git' },
           h(PanelStyles),
+          h('div', { className: 'dsg-rule' }),
           header,
           branchPanel,
           error !== '' ? h('div', { className: 'dsg-note dsg-note-error' }, error) : null,
@@ -1491,6 +1823,11 @@ window.__ModuleLoader__.load({
         own(ctx.locale.register(LOCALE_NS, DICTIONARIES));
         const t = ctx.locale.bind(LOCALE_NS);
 
+        /** The guide card draws its own artwork, so it gets a larger mark. */
+        function GuideIcon() {
+          return h(GitIcon, { size: 20 });
+        }
+
         try {
           const tabs = ctx.sidebarRightTabs;
           if (tabs === undefined || typeof tabs.register !== 'function') {
@@ -1501,7 +1838,7 @@ window.__ModuleLoader__.load({
               id: TAB_ID,
               kind: TAB_ID,
               title: () => t('tab'),
-              guide: [{ order: 15, title: () => t('tab'), description: () => t('guide'), icon: GitIcon }],
+              guide: [{ order: 15, title: () => t('tab'), description: () => t('guide'), icon: GuideIcon }],
             }),
           );
           own(

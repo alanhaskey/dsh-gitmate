@@ -186,6 +186,114 @@ function flattenGroups(groups) {
   return lines;
 }
 
+/** Hunk header: `@@ -old,cnt +new,cnt @@` optionally followed by a section. */
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/;
+
+/** Patch lines that describe the file rather than its content. */
+const PATCH_FILE_META = /^(diff --git |index |--- |\+\+\+ |old mode |new mode |similarity index |dissimilarity index )/;
+
+/**
+ * Find the part of a replaced line that actually changed.
+ *
+ * A common-prefix/suffix trim, not a word diff: it underlines the same span an
+ * editor does for the ordinary "one token changed" case, and refuses to mark
+ * anything when the two lines share too little to call one an edit of the other.
+ *
+ * @param before - the removed line's text.
+ * @param after - the added line's text.
+ * @returns `{ before, after }` triples of `[head, changed, tail]`, or undefined.
+ */
+function inlineChange(before, after) {
+  const limit = Math.min(before.length, after.length);
+  let head = 0;
+  while (head < limit && before[head] === after[head]) head += 1;
+  let tail = 0;
+  while (tail < limit - head && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail += 1;
+  const shared = head + tail;
+  if (shared === 0 || shared < limit * 0.3) return undefined;
+  return {
+    before: [before.slice(0, head), before.slice(head, before.length - tail), before.slice(before.length - tail)],
+    after: [after.slice(0, head), after.slice(head, after.length - tail), after.slice(after.length - tail)],
+  };
+}
+
+/** Attach inline spans to every replaced line that has a counterpart. */
+function pairChangedLines(rows) {
+  let index = 0;
+  while (index < rows.length) {
+    if (rows[index].kind !== 'del') {
+      index += 1;
+      continue;
+    }
+    let removed = index;
+    while (removed < rows.length && rows[removed].kind === 'del') removed += 1;
+    let added = removed;
+    while (added < rows.length && rows[added].kind === 'add') added += 1;
+    const removedRows = rows.slice(index, removed);
+    const addedRows = rows.slice(removed, added);
+    const pairs = Math.min(removedRows.length, addedRows.length);
+    for (let step = 0; step < pairs; step += 1) {
+      const change = inlineChange(removedRows[step].text, addedRows[step].text);
+      if (change === undefined) continue;
+      removedRows[step].inline = change.before;
+      addedRows[step].inline = change.after;
+    }
+    index = added;
+  }
+  return rows;
+}
+
+/**
+ * Turn a unified patch into rows a reader can follow.
+ *
+ * Git's format is built for tools: it repeats file headers and gives every line
+ * a one-character prefix. Each row here keeps both line numbers, the sign, and
+ * the text as separate fields, so a view can put them in gutters the way an
+ * editor's diff view does. This lives on the Host rather than in the panel so it
+ * is covered by the same offline tests as the rest of the git behaviour.
+ *
+ * @param patch - the unified diff text.
+ * @returns `{ rows, flags }`, where a flag is a file-level fact worth showing.
+ */
+export function diffRows(patch) {
+  const rows = [];
+  const flags = [];
+  let oldNo = 0;
+  let newNo = 0;
+  for (const line of String(patch ?? '').split('\n')) {
+    if (line === '') continue;
+    if (line.startsWith('new file mode')) {
+      if (!flags.includes('new')) flags.push('new');
+      continue;
+    }
+    if (line.startsWith('deleted file mode')) {
+      if (!flags.includes('deleted')) flags.push('deleted');
+      continue;
+    }
+    if (line.startsWith('rename from ') || line.startsWith('rename to ')) {
+      if (!flags.includes('renamed')) flags.push('renamed');
+      continue;
+    }
+    if (PATCH_FILE_META.test(line)) continue;
+    if (line.startsWith('\\')) continue;
+    const hunk = HUNK_HEADER.exec(line);
+    if (hunk !== null) {
+      oldNo = Number(hunk[1]);
+      newNo = Number(hunk[3]);
+      // Without a section, the header itself is the only location hint.
+      rows.push({ kind: 'hunk', text: (hunk[5] ?? '').trim() || line });
+      continue;
+    }
+    const sign = line[0];
+    const text = line.slice(1);
+    if (sign === '+') rows.push({ kind: 'add', newNo: newNo++, text });
+    else if (sign === '-') rows.push({ kind: 'del', oldNo: oldNo++, text });
+    else if (sign === ' ') rows.push({ kind: 'context', oldNo: oldNo++, newNo: newNo++, text });
+    else rows.push({ kind: 'meta', text: line });
+  }
+  return { rows: pairChangedLines(rows), flags };
+}
+
 /**
  * Build the git command layer.
  * @param options - `exec` runs one command; `config` carries plugin tunables.
@@ -1111,16 +1219,16 @@ export function createGitCore({ exec, config = {} }) {
     if (escape) return { ok: false, isRepo: true, error: escape };
     const text = previewUntracked(found.root, target);
     if (text === '') return { ok: false, isRepo: true, root: found.root, error: `cannot preview ${target}` };
-    const body = text
-      .split('\n')
-      .map((line) => `+${line}`)
-      .join('\n');
+    const lines = text.split('\n');
+    const body = lines.map((line) => `+${line}`).join('\n');
     return {
       ok: true,
       isRepo: true,
       root: found.root,
       scope: 'untracked',
-      patch: `diff --git a/${target} b/${target}\nnew file\n--- /dev/null\n+++ b/${target}\n@@ untracked file @@\n${body}`,
+      // A well-formed new-file patch, so the row parser numbers it 1..N like any
+      // other addition instead of tripping over a synthetic header.
+      patch: `diff --git a/${target} b/${target}\nnew file mode 100644\n--- /dev/null\n+++ b/${target}\n@@ -0,0 +1,${lines.length} @@\n${body}`,
       truncated: text.includes('… (truncated)'),
       files: [{ path: target, additions: text.split('\n').length, deletions: 0 }],
     };

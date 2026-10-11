@@ -11,11 +11,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createGitCore, shellQuote } from '../lib/git-core.js';
+import { createGitCore, diffRows, shellQuote } from '../lib/git-core.js';
 import {
   buildUserPrompt,
   explainFileChange,
   generateCommitMessage,
+  languageRule,
   normalizeCommitMessage,
   normalizeExplanation,
   resolveRoute,
@@ -623,7 +624,19 @@ try {
   check('stages through the bridge', stagedViaPanel.ok === true && stagedViaPanel.value.ok === true, stagedViaPanel.value);
 
   const stagedDiff = (await ask('diff', { sessionId: 'session-panel', scope: 'staged', paths: ['panel.js'] })).body;
-  check('reads a staged diff through the bridge', stagedDiff.ok === true && stagedDiff.value.patch.includes('panel = true'), stagedDiff.value?.patch?.slice(0, 120));
+  check(
+    'hands the panel parsed rows instead of a raw patch',
+    stagedDiff.ok === true &&
+      stagedDiff.value.patch === undefined &&
+      Array.isArray(stagedDiff.value.rows) &&
+      stagedDiff.value.rows.some((row) => row.kind === 'add' && row.text.includes('panel = true')),
+    stagedDiff.value,
+  );
+  check(
+    'numbers the added row on the new side',
+    stagedDiff.value.rows.find((row) => row.kind === 'add')?.newNo === 1,
+    stagedDiff.value.rows,
+  );
 
   const committedViaPanel = (await ask('commit', { sessionId: 'session-panel', message: 'feat(panel): add the panel entry' })).body;
   check('commits through the bridge', committedViaPanel.ok === true && committedViaPanel.value.ok === true, committedViaPanel.value);
@@ -639,8 +652,11 @@ try {
   const untrackedDiff = (await ask('diff', { sessionId: 'session-panel', scope: 'unstaged', paths: ['fresh-preview.js'] })).body;
   check(
     'shows an untracked file as additions instead of an empty pane',
-    untrackedDiff.ok === true && untrackedDiff.value.patch.includes('+export const preview = 1;'),
-    untrackedDiff.value?.patch?.slice(0, 200),
+    untrackedDiff.ok === true &&
+      untrackedDiff.value.flags.includes('new') &&
+      untrackedDiff.value.rows.filter((row) => row.kind === 'add').length === 2 &&
+      untrackedDiff.value.rows.some((row) => row.kind === 'add' && row.text.includes('export const preview = 1;')),
+    untrackedDiff.value,
   );
 
   const panelGenerated = (await ask('generateMessage', { sessionId: 'session-panel' })).body;
@@ -704,6 +720,54 @@ try {
   check('uses the requested branch', firstInit.branch === 'trunk', firstInit.branch);
   const freshLog = await core.log({ cwd: fresh });
   check('has one commit', freshLog.commits.length === 1 && freshLog.commits[0].subject === 'chore: initial commit', freshLog.commits);
+
+  section('diff rows for a reader');
+  const SAMPLE_PATCH = [
+    'diff --git a/src/app.js b/src/app.js',
+    'index f7de733..5ef9430 100644',
+    '--- a/src/app.js',
+    '+++ b/src/app.js',
+    '@@ -10,7 +10,8 @@ export function main() {',
+    ' const a = 1;',
+    ' const b = 2;',
+    '-const total = a + b;',
+    '+const total = a + b + 1;',
+    '+const extra = true;',
+    ' return total;',
+    ' }',
+    '',
+  ].join('\n');
+  const parsed = diffRows(SAMPLE_PATCH);
+  check('drops the git file header', !parsed.rows.some((row) => row.text.includes('diff --git') || row.text.includes('index f7de733')), parsed.rows.map((r) => r.text));
+  check('keeps the hunk section as its own row', parsed.rows[0].kind === 'hunk' && parsed.rows[0].text.includes('export function main'), parsed.rows[0]);
+  check('numbers context lines on both sides', parsed.rows[1].oldNo === 10 && parsed.rows[1].newNo === 10, parsed.rows[1]);
+  const removed = parsed.rows.find((row) => row.kind === 'del');
+  const added = parsed.rows.find((row) => row.kind === 'add');
+  check('numbers a removed line only on the old side', removed.oldNo === 12 && removed.newNo === undefined, removed);
+  check('numbers the first added line on both sides', added.oldNo === undefined && added.newNo === 12, added);
+  const lastContext = parsed.rows.filter((r) => r.kind === 'context').pop();
+  check('keeps counting past a replacement', lastContext.oldNo === 14 && lastContext.newNo === 15, lastContext);
+  // The removed line lost nothing of its own (the edit was a pure insertion),
+  // so only the added line carries a mark, and only over what it inserted.
+  check('marks only the span that changed', removed.inline?.[1] === '' && added.inline?.[1] === ' + 1', { removed: removed.inline, added: added.inline });
+  check('keeps the shared text out of the mark', removed.inline?.[0] === 'const total = a + b' && added.inline?.[2] === ';', { removed: removed.inline, added: added.inline });
+  check('a line with no counterpart is not marked', parsed.rows.filter((r) => r.kind === 'add')[1].inline === undefined);
+
+  const unrelated = diffRows(['@@ -1 +1 @@', '-aaaaaaaaaaaaaaaaaaaa', '+bbbbbbbbbbbbbbbbbbbb', ''].join('\n'));
+  check('does not mark two unrelated lines', unrelated.rows.every((row) => row.inline === undefined), unrelated.rows);
+
+  const createdFile = diffRows(['diff --git a/new.txt b/new.txt', 'new file mode 100644', 'index 0000000..1111111', '--- /dev/null', '+++ b/new.txt', '@@ -0,0 +1,2 @@', '+one', '+two', ''].join('\n'));
+  check('reports a new file', createdFile.flags.includes('new'), createdFile.flags);
+  check('new file lines start at one', createdFile.rows[1].newNo === 1 && createdFile.rows[1].oldNo === undefined, createdFile.rows[1]);
+
+  const deletedFile = diffRows(['diff --git a/gone.txt b/gone.txt', 'deleted file mode 100644', '--- a/gone.txt', '+++ /dev/null', '@@ -1 +0,0 @@', '-bye', ''].join('\n'));
+  check('reports a deleted file', deletedFile.flags.includes('deleted'), deletedFile.flags);
+
+  const renamedFile = diffRows(['diff --git a/a.txt b/b.txt', 'similarity index 100%', 'rename from a.txt', 'rename to b.txt', ''].join('\n'));
+  check('reports a rename with no content rows', renamedFile.flags.includes('renamed') && renamedFile.rows.length === 0, renamedFile);
+
+  check('an empty patch yields no rows', diffRows('').rows.length === 0);
+  check('a no-newline marker adds no row', diffRows(['@@ -1 +1 @@', '-a', '+b', '\\ No newline at end of file', ''].join('\n')).rows.length === 3);
 
   section('undo the last commit');
   const undoRepo = join(sandbox, 'undo-repo');
@@ -770,6 +834,11 @@ try {
   const explainLlm = {
     async *stream(options) {
       check('sends the patch to the model', options.messages[0].content[0].text.includes('a.txt'), options.messages[0].content[0].text.slice(0, 80));
+      check(
+        'carries the configured language into the prompt',
+        options.system.includes('Simplified Chinese'),
+        options.system.slice(-160),
+      );
       yield { type: 'text-delta', index: 0, text: '```\n- rewrites a.txt\n- nothing else\n```' };
       yield { type: 'finish', reason: { kind: 'stop' } };
     },
@@ -779,6 +848,8 @@ try {
     route: { provider: 'p', model: 'm' },
     path: 'a.txt',
     patch: '--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-one\n+two\n',
+    // The same `messageLanguage` setting drives the commit message and this.
+    language: 'zh',
   });
   check('explains a file change', fileSummary.ok === true && fileSummary.summary.startsWith('- rewrites a.txt'), fileSummary);
   check('strips the code fence', !fileSummary.summary.includes('```'));
@@ -786,6 +857,30 @@ try {
   check('rejects an empty patch', (await explainFileChange({ llm: explainLlm, route: { provider: 'p', model: 'm' }, path: 'x', patch: '  ' })).ok === false);
   check('rejects a missing model service', (await explainFileChange({ llm: null, route: { provider: 'p', model: 'm' }, path: 'x', patch: 'y' })).ok === false);
   check('normalizes a labelled explanation', normalizeExplanation('Summary: - one thing') === '- one thing');
+
+  section('one language setting, both outputs');
+  check('zh message rule keeps the conventional prefix', languageRule('zh', 'message').includes('<type>(<scope>):'));
+  check('zh explanation rule does not mention the commit prefix', !languageRule('zh', 'explanation').includes('<type>'));
+  check('zh explanation rule asks for Simplified Chinese', languageRule('zh', 'explanation').includes('Simplified Chinese'));
+  check('en explanation rule asks for English', languageRule('en', 'explanation') === 'Write the explanation in English.');
+  check('auto explanation can fall back to the patch language', languageRule('auto', 'explanation').includes('code comments'));
+  check('auto message rule stays about commit subjects', languageRule('auto', 'message').includes('commit subjects'));
+  check('an unknown language behaves as auto', languageRule('klingon', 'message') === languageRule('auto', 'message'));
+
+  const zhMessageLlm = {
+    async *stream(options) {
+      check('the commit prompt uses the message phrasing', options.system.includes('Write the commit message in Simplified Chinese'), options.system.slice(-140));
+      yield { type: 'text-delta', index: 0, text: 'feat: 说明' };
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    },
+  };
+  const zhMessage = await generateCommitMessage({
+    llm: zhMessageLlm,
+    route: { provider: 'p', model: 'm' },
+    bundle,
+    language: 'zh',
+  });
+  check('generates a Chinese commit message', zhMessage.ok === true && zhMessage.message === 'feat: 说明', zhMessage);
   check('drops blank lines', normalizeExplanation('- a\n\n\n- b') === '- a\n- b');
 
   section('detached HEAD and unborn repositories');
