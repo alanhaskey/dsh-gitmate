@@ -90,11 +90,20 @@ window.__ModuleLoader__.load({
         saving: '保存中…',
         saved: '已保存，面板正在重载…',
         clean: '工作区是干净的',
+        stModified: '修改',
+        stAdded: '新增',
+        stDeleted: '删除',
+        stRenamed: '重命名',
+        stCopied: '复制',
+        stUnmerged: '冲突',
+        stTypeChanged: '类型变更',
+        stChanged: '改动',
         noChanges: '没有改动',
         truncated: '补丁过长，已截断',
         moreContext: '展开更多上下文',
         lessContext: '收起到默认上下文',
         emptyPatch: '这个文件没有可显示的差异。',
+        resizeHint: '拖动调整高度，双击恢复默认',
         nothingStaged: '还没有暂存任何改动。',
         explain: '解释改动',
         explaining: '正在总结…',
@@ -203,11 +212,20 @@ window.__ModuleLoader__.load({
         saving: 'Saving…',
         saved: 'Saved; the panel is reloading…',
         clean: 'The working tree is clean',
+        stModified: 'Modified',
+        stAdded: 'Added',
+        stDeleted: 'Deleted',
+        stRenamed: 'Renamed',
+        stCopied: 'Copied',
+        stUnmerged: 'Conflict',
+        stTypeChanged: 'Type',
+        stChanged: 'Changed',
         noChanges: 'No changes',
         truncated: 'Patch truncated',
         moreContext: 'Show more context',
         lessContext: 'Collapse to default context',
         emptyPatch: 'This file has no diff to show.',
+        resizeHint: 'Drag to resize, double-click to reset',
         nothingStaged: 'Nothing is staged yet.',
         explain: 'Explain change',
         explaining: 'Summarizing…',
@@ -433,10 +451,10 @@ window.__ModuleLoader__.load({
 .dsg-upstream { color:var(--dsw-alias-label-secondary); font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:14em; }
 /* Deliberately plain: the branch name, a disclosure caret, and nothing else.
    It reads as a control from its shape and hover state, not from decoration. */
-.dsg-branch-btn { display:inline-flex; align-items:center; gap:5px; min-width:0; max-width:100%; appearance:none; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); font:inherit; font-weight:600; font-size:12.5px; padding:0 9px; min-height:28px; border-radius:999px; cursor:pointer; transition:border-color .12s ease, background-color .12s ease; }
+.dsg-branch-btn { display:inline-flex; align-items:center; gap:5px; min-width:0; max-width:100%; appearance:none; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary); font:inherit; font-weight:600; font-size:12.5px; padding:0 9px; min-height:28px; border-radius:999px; cursor:pointer; transition:border-color .12s ease; }
 .dsg-branch-btn:hover:not(:disabled) { border-color:var(--dsw-alias-border-l2); }
 .dsg-branch-btn:disabled { cursor:default; opacity:.7; }
-.dsg-branch-static { display:inline-flex; align-items:center; padding:0 9px; min-height:28px; font-weight:600; font-size:12.5px; border:1px solid var(--dsw-alias-border-l1); border-radius:999px; background:var(--dsw-alias-bg-layer-1); }
+.dsg-branch-static { display:inline-flex; align-items:center; padding:0 9px; min-height:28px; font-weight:600; font-size:12.5px; border:1px solid var(--dsw-alias-border-l1); border-radius:999px; background:var(--dsw-alias-bg-base); }
 .dsg-branch-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
 .dsg-badge { display:inline-flex; align-items:center; border:1px solid var(--dsw-alias-border-l1); border-radius:999px; padding:1px 7px; font-size:10px; color:var(--dsw-alias-label-secondary); }
 .dsg-badge-ahead { color:var(--dsw-alias-brand-primary); border-color:var(--dsw-alias-brand-primary); }
@@ -485,11 +503,19 @@ window.__ModuleLoader__.load({
 .dsg-row { display:flex; align-items:center; gap:7px; padding:4px 10px; transition:background-color .1s ease; }
 .dsg-row:hover { background:var(--dsw-alias-bg-layer-1); }
 .dsg-row-active { background:var(--dsw-alias-bg-layer-1); box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary); }
-/* The status letter carries its own colour: the row sets an inline color from
-   the change's kind, and currentColor makes the outline and glyph match. */
-.dsg-mark { flex:0 0 auto; width:17px; height:17px; border-radius:6px; border:1px solid currentColor; background:var(--dsw-alias-bg-base); display:inline-flex; align-items:center; justify-content:center; font-size:9.5px; font-weight:700; line-height:1; }
-.dsg-path { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; cursor:pointer; }
-.dsg-path:hover { text-decoration:underline; text-underline-offset:2px; }
+/* The change's kind as a word: the row sets an inline color from the status,
+   and currentColor makes the outline and text match. */
+.dsg-kind { flex:0 0 auto; min-width:34px; text-align:center; border-radius:6px; border:1px solid currentColor; background:var(--dsw-alias-bg-base); display:inline-flex; align-items:center; justify-content:center; font-size:9.5px; font-weight:600; line-height:1; padding:2px 4px; }
+.dsg-path { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; cursor:pointer; appearance:none; background:none; border:none; padding:0; color:inherit; }
+.dsg-row { cursor:pointer; }
+.dsg-lines { flex:0 0 auto; display:inline-flex; align-items:center; gap:4px; font-size:10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+/* A grab bar between the list and the commit area. It keeps a real hit area
+   while the visible line stays one pixel. */
+.dsg-splitter { flex:0 0 auto; height:9px; margin:-4px 0 -4px; cursor:row-resize; position:relative; z-index:2; }
+.dsg-splitter::after { content:''; position:absolute; left:10px; right:10px; top:4px; height:1px; background:var(--dsw-alias-border-l1); transition:background-color .12s ease; }
+.dsg-splitter:hover::after, .dsg-splitter:active::after { background:var(--dsw-alias-brand-primary); }
+.dsg-commit-host { flex:0 0 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; }
+.dsg-commit-host > .dsg-commit { flex:1 1 auto; }
 
 /* diff -------------------------------------------------------------------- */
 .dsg-diff { border-top:1px solid var(--dsw-alias-border-l1); border-left:2px solid var(--dsw-alias-brand-primary); background:var(--dsw-alias-bg-layer-2); }
@@ -545,7 +571,6 @@ window.__ModuleLoader__.load({
 .dsg-popover-foot { display:flex; align-items:center; gap:6px; padding:7px 9px; border-top:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); }
 .dsg-branch-row { display:flex; align-items:center; gap:7px; padding:5px 7px; border-radius:8px; font-size:11.5px; }
 .dsg-branch-row:hover { background:var(--dsw-alias-bg-layer-1); }
-.dsg-branch-row-current { background:var(--dsw-alias-bg-layer-1); }
 .dsg-branch-row-current .dsg-branch-row-name { font-weight:600; }
 .dsg-branch-lead { flex:0 0 auto; width:14px; display:inline-flex; align-items:center; justify-content:center; color:var(--dsw-alias-label-secondary); }
 .dsg-branch-row-name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; cursor:pointer; }
@@ -584,23 +609,30 @@ window.__ModuleLoader__.load({
       };
     }
 
-    /** The single-letter status mark, in the vocabulary git's porcelain uses. */
-    function markFor(status) {
+    /**
+     * The status word for one change.
+     *
+     * A letter is git's vocabulary, not a reader's: the row says 修改 / 删除 /
+     * 新增 in the panel's own language instead.
+     */
+    function kindKey(status) {
       switch (status) {
         case 'modified':
-          return 'M';
+          return 'stModified';
         case 'added':
-          return 'A';
+          return 'stAdded';
         case 'deleted':
-          return 'D';
+          return 'stDeleted';
         case 'renamed':
-          return 'R';
+          return 'stRenamed';
         case 'copied':
-          return 'C';
+          return 'stCopied';
         case 'unmerged':
-          return 'U';
+          return 'stUnmerged';
+        case 'type-changed':
+          return 'stTypeChanged';
         default:
-          return '•';
+          return 'stChanged';
       }
     }
 
@@ -661,27 +693,57 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /** The line counts git reports for one change, when it has them. */
+    function LineCounts({ lines }) {
+      if (lines === null || lines === undefined) return null;
+      const additions = lines.additions;
+      const deletions = lines.deletions;
+      if (additions === null && deletions === null) return null;
+      return h(
+        'span',
+        { className: 'dsg-lines' },
+        additions === null || additions === undefined
+          ? null
+          : h('span', { className: 'dsg-stat-add' }, `+${additions}`),
+        deletions === null || deletions === undefined
+          ? null
+          : h('span', { className: 'dsg-stat-del' }, `−${deletions}`),
+      );
+    }
+
     /** One changed path, with the action that moves it across the index boundary. */
-    function FileRow({ entry, scope, active, onOpen, onAction, busy, confirming, confirmKey, t }) {
+    function FileRow({ entry, scope, active, lines, onToggle, onAction, busy, confirming, confirmKey, t }) {
       const isStaged = scope === 'staged';
       const armed = confirming === confirmKey;
       return h(
         'div',
-        { className: `dsg-row${active ? ' dsg-row-active' : ''}` },
+        {
+          className: `dsg-row${active ? ' dsg-row-active' : ''}`,
+          'aria-expanded': active,
+          // The whole row is the target, not just the path text; the controls
+          // inside it stop the click themselves.
+          onClick: (event) => {
+            if (event.target.closest('button, input, label, a') !== null) return;
+            onToggle(scope === 'staged' ? 'staged' : 'unstaged', entry.path);
+          },
+        },
         h(
           'span',
-          { className: 'dsg-mark', style: { color: colourFor(entry.status) }, title: entry.status },
-          markFor(entry.status),
+          { className: 'dsg-kind', style: { color: colourFor(entry.status) }, title: entry.status },
+          t(kindKey(entry.status)),
         ),
         h(
-          'span',
+          'button',
           {
+            type: 'button',
             className: 'dsg-path',
             title: entry.path,
-            onClick: () => onOpen(isStaged ? 'staged' : 'unstaged', entry.path),
+            'aria-expanded': active,
+            onClick: () => onToggle(scope === 'staged' ? 'staged' : 'unstaged', entry.path),
           },
           entry.from ? `${entry.from} → ${entry.path}` : entry.path,
         ),
+        h(LineCounts, { lines }),
         h(
           'button',
           {
@@ -738,9 +800,14 @@ window.__ModuleLoader__.load({
         const [draft, setDraft] = useState(null);
         const [ignorePlan, setIgnorePlan] = useState(null);
         const [wideContext, setWideContext] = useState(false);
+        /** Pixels reserved for the commit area; null means "as tall as it needs". */
+        const [commitHeight, setCommitHeight] = useState(null);
         const [ignoreChoice, setIgnoreChoice] = useState(null);
         const mounted = useRef(true);
         const ignoreRef = useRef(null);
+        const rootRef = useRef(null);
+        const commitRef = useRef(null);
+        const dragRef = useRef(null);
         ignoreRef.current = ignoreChoice;
 
         useEffect(() => {
@@ -841,6 +908,20 @@ window.__ModuleLoader__.load({
             setPatch(answer.value);
           },
           [request],
+        );
+
+        /** Open a file's diff, or close it when the same file is clicked again. */
+        const toggleDiff = useCallback(
+          (scope, path) => {
+            if (open !== null && open.path === path) {
+              setOpen(null);
+              setPatch(null);
+              setSummary(null);
+              return;
+            }
+            void openDiff(scope, path, wideContext ? 24 : undefined);
+          },
+          [open, openDiff, wideContext],
         );
 
         /** Ask the model what this file's change does, instead of reading it all. */
@@ -1466,7 +1547,10 @@ window.__ModuleLoader__.load({
                     entry,
                     scope: group.key === 'staged' ? 'staged' : group.key,
                     active: open?.path === entry.path,
-                    onOpen: openDiff,
+                    lines: entry.lines ?? (group.key === 'untracked' && status.untrackedLines?.[entry.path] !== undefined
+                      ? { additions: status.untrackedLines[entry.path], deletions: 0 }
+                      : undefined),
+                    onToggle: toggleDiff,
                     onAction,
                     busy: disabled,
                     confirming,
@@ -1641,6 +1725,43 @@ window.__ModuleLoader__.load({
           rollbackRow,
         );
 
+        /**
+         * The bar between the list and the commit area.
+         *
+         * Dragging it sets how much height the commit area keeps; the list takes
+         * whatever is left. Double-clicking returns to the natural height, which
+         * matters because there is no other way back once it is resized.
+         */
+        const splitter = h('div', {
+          className: 'dsg-splitter',
+          role: 'separator',
+          'aria-orientation': 'horizontal',
+          'aria-label': t('resizeHint'),
+          title: t('resizeHint'),
+          onDoubleClick: () => setCommitHeight(null),
+          onPointerDown: (event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            dragRef.current = { y: event.clientY, height: commitRef.current?.offsetHeight ?? 0 };
+          },
+          onPointerMove: (event) => {
+            const drag = dragRef.current;
+            if (drag === null) return;
+            const room = (rootRef.current?.offsetHeight ?? 600) - 160;
+            const next = Math.max(120, Math.min(drag.height + (drag.y - event.clientY), Math.max(140, room)));
+            setCommitHeight(next);
+          },
+          onPointerUp: (event) => {
+            dragRef.current = null;
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
+          },
+          onPointerCancel: () => {
+            dragRef.current = null;
+          },
+        });
+
         /** One labelled settings row. */
         const field = (label, control) =>
           h('div', { className: 'dsg-form-row', key: label }, h('span', { className: 'dsg-label' }, label), control);
@@ -1795,7 +1916,7 @@ window.__ModuleLoader__.load({
 
         return h(
           'div',
-          { className: 'dsg-root', 'data-plugin': 'dsh-git' },
+          { className: 'dsg-root', 'data-plugin': 'dsh-git', ref: rootRef },
           h(PanelStyles),
           h('div', { className: 'dsg-rule' }),
           header,
@@ -1806,7 +1927,18 @@ window.__ModuleLoader__.load({
           status && !status.isRepo ? emptyState : null,
           status?.isRepo && !status.identityConfigured ? identityNote : null,
           status?.isRepo ? (view === 'settings' ? settingsView : changes) : null,
-          status?.isRepo && view === 'changes' ? commitBox : null,
+          status?.isRepo && view === 'changes' ? splitter : null,
+          status?.isRepo && view === 'changes'
+            ? h(
+                'div',
+                {
+                  className: 'dsg-commit-host',
+                  ref: commitRef,
+                  style: commitHeight === null ? undefined : { height: `${commitHeight}px` },
+                },
+                commitBox,
+              )
+            : null,
         );
       };
     }

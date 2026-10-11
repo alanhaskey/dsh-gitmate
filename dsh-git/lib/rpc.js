@@ -122,7 +122,9 @@ export function createPanelDispatcher(operations) {
 
     switch (endpoint) {
       case 'status': {
-        const state = await core.status(bound);
+        // The panel shows each row's +N/-M, so it asks for the counts; the agent
+        // tool leaves them out and stays one git call cheaper.
+        const state = await core.status({ ...bound, withCounts: true });
         // The panel needs to know whether a commit identity exists before it
         // offers a commit button, so fold that probe into the same round trip.
         const identity = state.isRepo ? await core.identity(state.root, signal) : { userName: '', userEmail: '' };

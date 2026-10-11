@@ -481,9 +481,12 @@ export function createGitCore({ exec, config = {} }) {
 
   /**
    * Read the full working-tree state.
-   * @param args - `cwd` selects the repository.
+   *
+   * @param args - `cwd` selects the repository; `withCounts` also reports how
+   * many lines each change adds and removes, which costs two extra git calls
+   * and is therefore off by default.
    */
-  async function status({ cwd, signal } = {}) {
+  async function status({ cwd, signal, withCounts = false } = {}) {
     const found = await probe({ cwd, signal });
     if (!found.isRepo) {
       return {
@@ -502,6 +505,37 @@ export function createGitCore({ exec, config = {} }) {
       return { ok: false, isRepo: true, root: found.root, error: describeFailure(result, 'git status failed') };
     }
     const state = parsePorcelainV2(result.stdout);
+    let untrackedLines;
+    if (withCounts) {
+      // `--no-renames` keeps one path per row so the counts map straight onto
+      // the entries; a rename is summed from its two halves below.
+      const [worktree, index] = await Promise.all([
+        run(['diff', '--numstat', '--no-renames'], { cwd: found.root, signal }),
+        run(['diff', '--cached', '--numstat', '--no-renames'], { cwd: found.root, signal }),
+      ]);
+      const attach = (entries, raw) => {
+        if (!raw.ok) return;
+        const counts = parseNumstat(raw.stdout);
+        for (const entry of entries) {
+          const after = counts.get(entry.path);
+          const before = entry.from === undefined ? undefined : counts.get(entry.from);
+          if (after !== undefined && before !== undefined) {
+            entry.lines = {
+              additions: (after.additions ?? 0) + (before.additions ?? 0),
+              deletions: (after.deletions ?? 0) + (before.deletions ?? 0),
+            };
+          } else if (after !== undefined) entry.lines = after;
+          else if (before !== undefined) entry.lines = before;
+        }
+      };
+      attach(state.staged, index);
+      attach(state.unstaged, worktree);
+      untrackedLines = {};
+      for (const path of state.untracked) {
+        const count = countLines(found.root, path);
+        if (count !== null) untrackedLines[path] = count;
+      }
+    }
     return {
       ok: true,
       isRepo: true,
@@ -517,6 +551,7 @@ export function createGitCore({ exec, config = {} }) {
       unstaged: state.unstaged,
       untracked: state.untracked,
       conflicted: state.conflicted,
+      ...(untrackedLines === undefined ? {} : { untrackedLines }),
       clean:
         state.staged.length === 0 &&
         state.unstaged.length === 0 &&
@@ -1183,6 +1218,40 @@ export function createGitCore({ exec, config = {} }) {
       untracked: state.untracked.slice(0, 20).map((path) => ({ path, preview: previewUntracked(root, path) })),
       untrackedTotal: state.untracked.length,
     };
+  }
+
+  /** Read `git diff --numstat` output as path → line counts. */
+  function parseNumstat(text) {
+    const counts = new Map();
+    for (const line of String(text ?? '').split('\n')) {
+      if (line.trim() === '') continue;
+      const [added, deleted, ...rest] = line.split('\t');
+      const path = rest.join('\t');
+      if (path === '') continue;
+      // A binary file reports "-" for both counts.
+      counts.set(path, {
+        additions: added === '-' ? null : Number(added),
+        deletions: deleted === '-' ? null : Number(deleted),
+      });
+    }
+    return counts;
+  }
+
+  /** Count the lines of one small text file, or null when it is not one. */
+  function countLines(root, path) {
+    try {
+      const abs = resolve(root, path);
+      if (!isInside(root, abs)) return null;
+      const info = statSync(abs);
+      if (!info.isFile() || info.size > 512 * 1024) return null;
+      const buffer = readFileSync(abs);
+      if (buffer.subarray(0, 8000).includes(0)) return null;
+      const lines = buffer.toString('utf8').split('\n');
+      if (lines[lines.length - 1] === '') lines.pop();
+      return lines.length;
+    } catch {
+      return null;
+    }
   }
 
   /** Read a bounded, text-only preview of one untracked file. */

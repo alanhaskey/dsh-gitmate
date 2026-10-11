@@ -561,6 +561,26 @@ try {
   const blanketDiscard = await runTool('git_stage', { cwd: toolRepo, action: 'discard' });
   check('git_stage refuses a blanket discard', blanketDiscard.value.ok === false && blanketDiscard.text.startsWith('error:'), blanketDiscard.text);
 
+  section('per-file line counts for the panel');
+  const counted = await core.status({ cwd: toolRepo, withCounts: true });
+  check('counts are opt-in', (await core.status({ cwd: toolRepo })).staged.every((e) => e.lines === undefined));
+  check('reports counts when asked', counted.ok === true, counted);
+  check('reports nothing to count on a clean tree', counted.staged.length === 0 && counted.unstaged.length === 0, counted);
+
+  writeFileSync(join(toolRepo, 'app.js'), 'line one\nline two\nline three\n');
+  writeFileSync(join(toolRepo, 'brand-new.txt'), 'a\nb\nc\nd\n');
+  const dirty = await core.status({ cwd: toolRepo, withCounts: true });
+  const changed = dirty.unstaged.find((entry) => entry.path === 'app.js');
+  check('attaches a count to a modified file', changed?.lines?.additions >= 1 && changed?.lines?.deletions >= 1, changed);
+  check('counts an untracked file by its lines', dirty.untrackedLines['brand-new.txt'] === 4, dirty.untrackedLines);
+
+  await core.stage({ cwd: toolRepo, action: 'add', paths: ['app.js'] });
+  const stagedCounts = await core.status({ cwd: toolRepo, withCounts: true });
+  check('attaches a count to a staged file', stagedCounts.staged.find((e) => e.path === 'app.js')?.lines !== undefined, stagedCounts.staged);
+  await core.stage({ cwd: toolRepo, action: 'discard', paths: ['app.js'] });
+  await core.stage({ cwd: toolRepo, action: 'unstage' });
+  rmSync(join(toolRepo, 'brand-new.txt'), { force: true });
+
   section('panel bridge');
   check(
     'opens the exact Fetch route under /api',
