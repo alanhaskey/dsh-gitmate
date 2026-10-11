@@ -1,0 +1,42 @@
+# Bundle patch layer: one Host row, loaded from this package's entry point.
+#
+# The row names the entry module by PATH rather than by package specifier.
+# `@deepseek-ai/dsh-client-modules` caches its "is this a client package?"
+# verdict per loader specifier *until the process restarts*, so a package that
+# later gains a `dsh.client` declaration keeps the stale negative answer under
+# its package name and its browser half never loads. Because the two halves ship
+# together, the row is addressed by path (anchored beside this file, as inserted
+# relative rows are) so the scan always reads the manifest afresh — the same
+# technique used by any dual-face bundle whose client half must appear without
+# an app restart.
+#
+# Tunables live here so they survive upgrades of the package itself. Remove a
+# key to fall back to the built-in default; the values below are the defaults.
+#
+# Note: this bundle deliberately does not touch the `hmr` row. Module hot reload
+# needs `--expose-internals`, which DSH Desktop does not pass, so overriding
+# `hmr.root` makes that row fail to activate and would break live profile
+# configuration reload. `lib/plugin.js` handles code reload instead.
+- insert:
+    - id: dsh-git
+      name: './lib/plugin.js'
+      config:
+        # Branch created by git_init when the caller names none.
+        defaultBranch: main
+        # Language of generated commit messages: auto (match the repository's
+        # recent commits), en, or zh.
+        messageLanguage: auto
+        # Subject style: conventional (feat: ...) or plain (imperative sentence).
+        messageStyle: conventional
+        # Bytes of diff text handed to the message model per change set.
+        maxPromptBytes: 24000
+        # Bytes of patch text returned by the git_diff tool before truncation.
+        maxDiffBytes: 80000
+        # Maximum wall-clock time for one git command; network commands get four times this.
+        commandTimeoutMs: 60000
+        # Add a Signed-off-by trailer to every commit this plugin creates.
+        signoff: false
+        # Optional provider/model pair for message generation. Omit both to use
+        # the session's default model.
+        # provider: deepseek-account
+        # model: deepseek-flash

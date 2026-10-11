@@ -1,0 +1,809 @@
+/**
+ * Offline smoke test for the git core.
+ *
+ * Runs the real git binary through a `node:child_process`-backed exec, so the
+ * behaviour checked here is the behaviour the Harness will get from
+ * `ctx.shell`. Run with `node test/smoke.mjs`.
+ */
+
+import { execFile } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { createGitCore, shellQuote } from '../lib/git-core.js';
+import {
+  buildUserPrompt,
+  explainFileChange,
+  generateCommitMessage,
+  normalizeCommitMessage,
+  normalizeExplanation,
+  resolveRoute,
+} from '../lib/messages.js';
+import * as plugin from '../lib/plugin.js';
+
+/**
+ * The keyword sets `@deepseek-ai/dsh-tools` enforces at `tools.register` time.
+ * Mirrored here so a schema the live Harness would reject fails in this test
+ * instead of at install time. Source: `assertSupportedJsonSchema` in
+ * `@deepseek-ai/dsh-tools/lib/index.js`.
+ */
+const SCHEMA_TYPES = ['object', 'array', 'string', 'number', 'integer', 'boolean', 'null'];
+const CONSTRAINT_KEYWORDS = new Set(['type', 'oneOf', 'properties', 'required', 'additionalProperties', 'items', 'enum', 'const']);
+const ANNOTATION_KEYWORDS = new Set(['description', 'title', 'default', 'examples']);
+const ONE_OF_SIBLING_KEYWORDS = ['properties', 'required', 'additionalProperties', 'items', 'enum', 'const'];
+
+/** Collect every way `node` leaves the supported JSON Schema subset. */
+function checkSchemaNode(node, path, violations) {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) {
+    violations.push(`${path} must be a schema object`);
+    return;
+  }
+  for (const key of Object.keys(node)) {
+    if (CONSTRAINT_KEYWORDS.has(key) || ANNOTATION_KEYWORDS.has(key)) continue;
+    violations.push(`${path}.${key} is not a supported keyword`);
+  }
+  if (Object.hasOwn(node, 'description') && typeof node.description !== 'string') {
+    violations.push(`${path}.description must be a string`);
+  }
+  const hasType = Object.hasOwn(node, 'type');
+  const hasOneOf = Object.hasOwn(node, 'oneOf');
+  if (hasType && hasOneOf) {
+    violations.push(`${path} cannot declare both type and oneOf`);
+    return;
+  }
+  if (!hasType && !hasOneOf) {
+    for (const key of ONE_OF_SIBLING_KEYWORDS) {
+      if (Object.hasOwn(node, key)) violations.push(`${path}.${key} requires type or oneOf`);
+    }
+    return;
+  }
+  if (hasOneOf) {
+    if (!Array.isArray(node.oneOf) || node.oneOf.length < 2) violations.push(`${path}.oneOf must hold at least two schemas`);
+    else node.oneOf.forEach((child, index) => checkSchemaNode(child, `${path}.oneOf[${index}]`, violations));
+    return;
+  }
+  const type = node.type;
+  if (typeof type !== 'string' || !SCHEMA_TYPES.includes(type)) {
+    violations.push(
+      Array.isArray(type)
+        ? `${path}.type must be a single type string (type arrays are not supported)`
+        : `${path}.type must be one of ${SCHEMA_TYPES.join('/')}`,
+    );
+    return;
+  }
+  const keywordTypes = {
+    properties: ['object'],
+    required: ['object'],
+    additionalProperties: ['object'],
+    items: ['array'],
+    enum: ['string', 'number', 'integer', 'boolean', 'null'],
+    const: ['string', 'number', 'integer', 'boolean', 'null'],
+  };
+  for (const [key, allowed] of Object.entries(keywordTypes)) {
+    if (Object.hasOwn(node, key) && !allowed.includes(type)) {
+      violations.push(`${path}.${key} is not supported on type "${type}"`);
+    }
+  }
+  if (type === 'object') {
+    if (Object.hasOwn(node, 'properties')) {
+      if (node.properties === null || typeof node.properties !== 'object' || Array.isArray(node.properties)) {
+        violations.push(`${path}.properties must be an object of schemas`);
+      } else {
+        for (const [child, schema] of Object.entries(node.properties)) {
+          checkSchemaNode(schema, `${path}.properties.${child}`, violations);
+        }
+      }
+    }
+    if (Object.hasOwn(node, 'required') && (!Array.isArray(node.required) || node.required.some((e) => typeof e !== 'string'))) {
+      violations.push(`${path}.required must be an array of strings`);
+    }
+  } else if (type === 'array') {
+    if (Object.hasOwn(node, 'items')) checkSchemaNode(node.items, `${path}.items`, violations);
+  } else if (Object.hasOwn(node, 'enum')) {
+    if (!Array.isArray(node.enum) || node.enum.length === 0) violations.push(`${path}.enum must be a non-empty array`);
+  }
+}
+
+let failures = 0;
+let checks = 0;
+
+function check(label, condition, detail) {
+  checks += 1;
+  if (condition) {
+    process.stdout.write(`  ok   ${label}\n`);
+  } else {
+    failures += 1;
+    process.stdout.write(`  FAIL ${label}${detail === undefined ? '' : ` — ${JSON.stringify(detail)}`}\n`);
+  }
+}
+
+function section(title) {
+  process.stdout.write(`\n${title}\n`);
+}
+
+const sandbox = mkdtempSync(join(tmpdir(), 'dsh-git-smoke-'));
+const repo = join(sandbox, 'repo');
+const fakeHome = join(sandbox, 'home');
+mkdirSync(fakeHome, { recursive: true });
+
+/**
+ * An isolated environment: a private HOME and no system config, so the machine's
+ * real git identity and defaults cannot decide the outcome of a check.
+ */
+const TEST_ENV = {
+  ...process.env,
+  HOME: fakeHome,
+  XDG_CONFIG_HOME: join(fakeHome, '.config'),
+  GIT_CONFIG_GLOBAL: join(fakeHome, '.gitconfig'),
+  GIT_CONFIG_SYSTEM: '/dev/null',
+};
+
+/** A minimal stand-in for `ctx.shell`, backed by a real bash process. */
+function childProcessExec({ command, cwd, stdin, timeoutMs }) {
+  return new Promise((settle) => {
+    const child = execFile(
+      '/bin/bash',
+      ['-c', command],
+      { cwd, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, env: TEST_ENV },
+      (error, stdout, stderr) => {
+        let code = 0;
+        if (error) code = typeof error.code === 'number' ? error.code : 1;
+        settle({
+          code,
+          stdout: stdout ?? '',
+          stderr: stderr ?? '',
+          timedOut: Boolean(error?.killed),
+          aborted: false,
+          denied: false,
+        });
+      },
+    );
+    if (stdin !== undefined) child.stdin.end(stdin);
+    else child.stdin.end();
+  });
+}
+
+const core = createGitCore({ exec: childProcessExec, config: { defaultBranch: 'main' } });
+
+try {
+  section('shell quoting');
+  check('quotes a plain word', shellQuote('src/a.ts') === "'src/a.ts'");
+  check('neutralizes a quote', shellQuote("it's") === "'it'\\''s'");
+  check('neutralizes a command substitution', shellQuote('$(rm -rf /)') === "'$(rm -rf /)'");
+
+  section('status outside a repository');
+  const before = await core.status({ cwd: sandbox });
+  check('reports isRepo false', before.isRepo === false, before);
+  check('offers git_init', typeof before.hint === 'string' && before.hint.includes('git_init'));
+
+  section('init');
+  const initialized = await core.init({ cwd: repo, gitignore: 'node_modules/\n*.log\n' });
+  check('creates the repository', initialized.ok === true && initialized.created === true, initialized);
+  check('uses the configured default branch', initialized.branch === 'main', initialized.branch);
+  check('writes .gitignore', initialized.gitignoreWritten === true);
+  check('reports a missing identity', initialized.identityConfigured === false);
+
+  const again = await core.init({ cwd: repo });
+  check('is idempotent', again.created === false && again.ok === true, again);
+
+  section('config');
+  check(
+    'writes a local identity',
+    (await core.config({ cwd: repo, action: 'set', key: 'user.name', value: 'Test User' })).ok === true,
+  );
+  check(
+    'writes a local email',
+    (await core.config({ cwd: repo, action: 'set', key: 'user.email', value: 'test@example.com' })).ok === true,
+  );
+  const readBack = await core.config({ cwd: repo, action: 'get', key: 'user.email' });
+  check('reads it back', readBack.found === true && readBack.value === 'test@example.com', readBack);
+  const missing = await core.config({ cwd: repo, action: 'get', key: 'user.signingkey' });
+  check('reports an unset key without failing', missing.ok === true && missing.found === false, missing);
+  const listed = await core.config({ cwd: repo, action: 'list' });
+  check('lists local entries', listed.ok === true && listed.entries.length >= 2, listed.entries?.length);
+  check(
+    'rejects an unknown action',
+    (await core.config({ cwd: repo, action: 'explode', key: 'user.name' })).ok === false,
+  );
+
+  section('stage and commit');
+  writeFileSync(join(repo, 'index.js'), 'export const answer = 42;\n');
+  writeFileSync(join(repo, 'notes.md'), '# notes\n');
+  const untracked = await core.status({ cwd: repo });
+  check('sees the gitignore and two new files', untracked.untracked.length === 3, untracked.untracked);
+  check('is not clean', untracked.clean === false);
+
+  const staged = await core.stage({ cwd: repo, action: 'add' });
+  check('stages everything', staged.ok === true, staged);
+  const afterStage = await core.status({ cwd: repo });
+  check('reports three staged paths', afterStage.staged.length === 3, afterStage.staged);
+  check('reports no untracked paths left', afterStage.untracked.length === 0);
+
+  const unstageOne = await core.stage({ cwd: repo, action: 'unstage', paths: ['notes.md'] });
+  check('unstages one path', unstageOne.ok === true, unstageOne);
+  const partly = await core.status({ cwd: repo });
+  check('leaves two staged and one untracked', partly.staged.length === 2 && partly.untracked.length === 1, {
+    staged: partly.staged,
+    untracked: partly.untracked,
+  });
+
+  const first = await core.commit({ cwd: repo, message: 'feat: add the answer module' });
+  check('commits', first.ok === true, first.error);
+  check('returns a short hash', typeof first.shortHash === 'string' && first.shortHash.length === 7, first.shortHash);
+  check('reports the branch', first.branch === 'main', first.branch);
+  check('is not marked generated', first.generated === false);
+  check('lists the committed file', first.files.some((file) => file.path === 'index.js'), first.files);
+
+  const emptyCommit = await core.commit({ cwd: repo, message: 'chore: nothing' });
+  check('refuses a commit with nothing staged', emptyCommit.ok === false, emptyCommit.error);
+  check('still reports the message it would have used', emptyCommit.message === 'chore: nothing', emptyCommit.message);
+
+  section('log and diff');
+  const logged = await core.log({ cwd: repo, limit: 5 });
+  check('returns the commit', logged.commits.length === 1 && logged.commits[0].hash === first.shortHash, logged.commits);
+  check('reports the subject', logged.commits[0].subject === 'feat: add the answer module', logged.commits[0]);
+
+  const lastPatch = await core.diff({ cwd: repo, scope: 'last-commit' });
+  check('reads the last commit patch', lastPatch.ok === true && lastPatch.patch.includes('answer = 42'), lastPatch.patch?.slice(0, 120));
+  check(
+    'reports per-file counts',
+    lastPatch.files.some((file) => file.path === 'index.js' && file.additions === 1 && file.deletions === 0),
+    lastPatch.files,
+  );
+
+  writeFileSync(join(repo, 'index.js'), 'export const answer = 43;\nexport const extra = true;\n');
+  const worktree = await core.diff({ cwd: repo, scope: 'unstaged' });
+  check('reads unstaged work', worktree.patch.includes('answer = 43'), worktree.patch?.slice(0, 160));
+  const stagedOnly = await core.diff({ cwd: repo, scope: 'staged' });
+  check('staged scope is empty after committing', stagedOnly.patch.trim() === '', stagedOnly.patch);
+
+  const statOnly = await core.diff({ cwd: repo, scope: 'unstaged', stat: true });
+  check('stat mode omits hunks', !statOnly.patch.includes('@@'), statOnly.patch);
+
+  section('path containment');
+  const escaped = await core.stage({ cwd: repo, action: 'add', paths: ['../../etc/passwd'] });
+  check('refuses a path escaping the repository', escaped.ok === false, escaped.error);
+  const discardAll = await core.stage({ cwd: repo, action: 'discard' });
+  check('refuses a blanket discard', discardAll.ok === false, discardAll.error);
+  const discarded = await core.stage({ cwd: repo, action: 'discard', paths: ['index.js'] });
+  check('discards one named path', discarded.ok === true, discarded);
+  check('reverted the work tree', (await core.diff({ cwd: repo, scope: 'unstaged' })).patch.trim() === '');
+
+  section('change bundle and message generation');
+  writeFileSync(join(repo, 'index.js'), 'export const answer = 43;\n');
+  writeFileSync(join(repo, 'extra.js'), 'export const extra = true;\n');
+  await core.stage({ cwd: repo, action: 'add', paths: ['index.js'] });
+  const bundle = await core.changeBundle({ cwd: repo });
+  check('bundle is ok', bundle.ok === true, bundle.error);
+  check('bundle carries the staged patch', bundle.staged.patch.includes('answer = 43'), bundle.staged.patch?.slice(0, 120));
+  check('bundle knows the branch', bundle.branch === 'main', bundle.branch);
+  check('bundle includes recent subjects', bundle.recentCommits.includes('feat: add the answer module'), bundle.recentCommits);
+  check('bundle samples untracked files', bundle.untracked.some((entry) => entry.path === 'extra.js'), bundle.untracked);
+
+  const prompt = buildUserPrompt(bundle);
+  check('prompt embeds the staged diff', prompt.includes('answer = 43'));
+  check('prompt embeds recent subjects', prompt.includes('feat: add the answer module'));
+
+  check('normalizes a fenced answer', normalizeCommitMessage('```\nfix: a\n```') === 'fix: a');
+  check('normalizes a quoted answer', normalizeCommitMessage('"fix: a"') === 'fix: a');
+  check('drops an attribution trailer', !normalizeCommitMessage('fix: a\n\nbody\n\nSigned-off-by: Bot <b@x>').includes('Signed-off-by'));
+  check('drops a label prefix', normalizeCommitMessage('Commit message: fix: a') === 'fix: a');
+
+  const routeFromConfig = resolveRoute({ config: { provider: 'p', model: 'm' } });
+  check('prefers the configured route', routeFromConfig.provider === 'p' && routeFromConfig.model === 'm');
+  const routeFromDefault = resolveRoute({ config: {}, defaultModel: { currentSelection: () => ({ provider: 'd', model: 'dm' }) } });
+  check('falls back to the default model', routeFromDefault.provider === 'd');
+  check('reports no route', resolveRoute({ config: {} }) === null);
+
+  const fakeLlm = {
+    async *stream(options) {
+      check('sends the resolved route to the model', options.provider === 'p' && options.model === 'm');
+      check('sends a system prompt', typeof options.system === 'string' && options.system.includes('Conventional Commits'));
+      yield { type: 'text-delta', index: 0, text: 'feat(core): ' };
+      yield { type: 'text-delta', index: 0, text: 'answer 43 instead of 42' };
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    },
+  };
+  const proposal = await generateCommitMessage({
+    llm: fakeLlm,
+    route: { provider: 'p', model: 'm' },
+    bundle,
+    language: 'en',
+  });
+  check('generates a message', proposal.ok === true && proposal.message === 'feat(core): answer 43 instead of 42', proposal);
+  check(
+    'reports the route it used',
+    proposal.meta?.provider === 'p' && proposal.meta?.subject === proposal.message,
+    proposal.meta,
+  );
+
+  const failingLlm = {
+    // eslint-disable-next-line require-yield
+    async *stream() {
+      throw new Error('transport exploded');
+    },
+  };
+  const failed = await generateCommitMessage({ llm: failingLlm, route: { provider: 'p', model: 'm' }, bundle });
+  check('surfaces a model failure', failed.ok === false && failed.error.includes('transport exploded'), failed);
+
+  const emptyLlm = { async *stream() { yield { type: 'finish', reason: { kind: 'stop' } }; } };
+  check('rejects an empty answer', (await generateCommitMessage({ llm: emptyLlm, route: { provider: 'p', model: 'm' }, bundle })).ok === false);
+  check('reports a missing model service', (await generateCommitMessage({ llm: null, route: { provider: 'p', model: 'm' }, bundle })).ok === false);
+
+  section('commit with a generated message');
+  const generated = await core.commit({
+    cwd: repo,
+    generateMessage: async () => ({ ok: true, message: 'feat(core): answer 43 instead of 42', meta: { provider: 'p', model: 'm' } }),
+  });
+  check('commits with the generated message', generated.ok === true, generated.error);
+  check('flags the message as generated', generated.generated === true);
+  check('stores the generated subject', generated.subject === 'feat(core): answer 43 instead of 42', generated.subject);
+  const afterGenerate = await core.log({ cwd: repo, limit: 3 });
+  check('history has both commits', afterGenerate.commits.length === 2, afterGenerate.commits.map((c) => c.subject));
+
+  const dry = await core.commit({
+    cwd: repo,
+    all: true,
+    dryRun: true,
+    generateMessage: async () => ({ ok: true, message: 'chore: preview', meta: {} }),
+  });
+  check('dry run reports the message', dry.dryRun === true && dry.message === 'chore: preview', dry);
+  check('dry run did not commit', (await core.log({ cwd: repo, limit: 5 })).commits.length === 2);
+
+  section('amend');
+  const amended = await core.commit({ cwd: repo, amend: true, message: 'feat(core): answer 43, amended' });
+  check('amends the commit', amended.ok === true && amended.amend === true, amended.error);
+  const afterAmend = await core.log({ cwd: repo, limit: 5 });
+  check('still has two commits', afterAmend.commits.length === 2, afterAmend.commits.length);
+  check('uses the new subject', afterAmend.commits[0].subject === 'feat(core): answer 43, amended', afterAmend.commits[0].subject);
+
+  const amendKeep = await core.commit({ cwd: repo, amend: true });
+  check('amends while keeping the message', amendKeep.ok === true && amendKeep.subject === 'feat(core): answer 43, amended', amendKeep);
+
+  section('branches');
+  const created = await core.branch({ cwd: repo, action: 'create', name: 'feature/panel' });
+  check('creates a branch', created.ok === true, created.error);
+  const branches = await core.branch({ cwd: repo, action: 'list' });
+  check('lists both branches', branches.branches.length === 2, branches.branches);
+  check('marks the new branch current', branches.branches.find((b) => b.name === 'feature/panel')?.current === true);
+  const switched = await core.branch({ cwd: repo, action: 'switch', name: 'main' });
+  check('switches back', switched.ok === true, switched.error);
+  const deleted = await core.branch({ cwd: repo, action: 'delete', name: 'feature/panel' });
+  check('deletes the branch', deleted.ok === true, deleted.error);
+  check('rejects delete without a name', (await core.branch({ cwd: repo, action: 'delete' })).ok === false);
+
+  section('sync without a remote');
+  const pushed = await core.sync({ cwd: repo, action: 'push' });
+  check('explains the missing remote', pushed.ok === false && /no remote/.test(pushed.error), pushed.error);
+
+  section('tool registration and schema subset');
+  const registered = [];
+  const toolRepo = join(sandbox, 'tool-repo');
+  const sessionCwds = { 'session-panel': toolRepo };
+  const panel = { route: null };
+  const configWrites = [];
+  const fakeEntry = { options: { id: 'dsh-git', name: 'file:///tmp/dsh-git/lib/plugin.js' } };
+  const fakeCtx = {
+    // The settings view needs the plugin's own Loader entry, exactly as the
+    // live Host reaches it through `ctx.fiber`.
+    fiber: { entry: fakeEntry },
+    logger: { info: () => {} },
+    tools: {
+      register: (definition) => {
+        registered.push(definition);
+        return () => {};
+      },
+    },
+    shell: {
+      resolve: (request) => request,
+      execute: async (spec) => ({
+        result: async () => {
+          const outcome = await childProcessExec({
+            command: spec.command,
+            cwd: spec.workdir,
+            stdin: spec.stdin,
+            timeoutMs: spec.timeoutMs,
+          });
+          return {
+            exitCode: outcome.code,
+            stdout: { text: outcome.stdout },
+            stderr: { text: outcome.stderr },
+            timedOut: outcome.timedOut,
+            aborted: false,
+            sandbox: undefined,
+          };
+        },
+      }),
+    },
+    get: (name) => {
+      if (name === 'sessions') {
+        return {
+          get: (id) => (Object.hasOwn(sessionCwds, id) ? { header: { cwd: sessionCwds[id] } } : undefined),
+        };
+      }
+      if (name === 'configEditor') {
+        return {
+          edit: async (entry, change) => {
+            configWrites.push({ entry, next: change({ defaultBranch: 'main', messageLanguage: 'auto' }, {}) });
+          },
+        };
+      }
+      return undefined;
+    },
+    effect: (callback) => {
+      callback();
+    },
+    /**
+     * Stand in for cordis's deferred inject. Only `connection` is requested, so
+     * this answers exactly that request and records the Fetch route the plugin
+     * opens — which is what lets the panel bridge be tested here. Injected
+     * services are exposed as context properties, matching cordis's rebinding:
+     * reading them with `ctx.get()` yields the raw service instead, and that
+     * difference is part of why the first live attempt at a bridge failed.
+     */
+    inject: (deps, callback) => {
+      if (!Array.isArray(deps) || !deps.includes('connection')) return () => {};
+      const connection = {
+        fetch: {
+          register: (route) => {
+            panel.route = route;
+            return () => {
+              panel.route = null;
+            };
+          },
+        },
+      };
+      const scoped = {
+        connection,
+        get: (name) => (name === 'connection' ? connection : undefined),
+      };
+      const dispose = callback(scoped);
+      return () => {
+        if (typeof dispose === 'function') dispose();
+      };
+    },
+  };
+
+  await plugin.apply(fakeCtx, { defaultBranch: 'main' });
+  const expectedNames = [
+    'git_branch',
+    'git_commit',
+    'git_config',
+    'git_diff',
+    'git_init',
+    'git_log',
+    'git_reset',
+    'git_stage',
+    'git_status',
+    'git_sync',
+  ];
+  check('registers exactly the documented tools', registered.map((t) => t.name).sort().join(',') === expectedNames.join(','), registered.map((t) => t.name));
+
+  for (const tool of registered) {
+    const violations = [];
+    checkSchemaNode(tool.parameters, `${tool.name}.parameters`, violations);
+    checkSchemaNode(tool.output.schema, `${tool.name}.output.schema`, violations);
+    check(`${tool.name}: schemas stay inside the DSH subset`, violations.length === 0, violations);
+    check(
+      `${tool.name}: declares a description and a result renderer`,
+      typeof tool.description === 'string' && tool.description.length > 30 && typeof tool.output.render === 'function',
+      { description: tool.description?.length, render: typeof tool.output.render },
+    );
+    check(
+      `${tool.name}: parameters are a closed object`,
+      tool.parameters.type === 'object' && tool.parameters.additionalProperties === false,
+      tool.parameters,
+    );
+  }
+
+  section('tools against a live repository');
+  const byName = (name) => registered.find((tool) => tool.name === name);
+  const runTool = async (name, args) => {
+    const tool = byName(name);
+    const value = await tool.execute(args, { agent: undefined, signal: undefined });
+    return { value, text: tool.output.render(args, value)[0].text };
+  };
+
+  const outside = await runTool('git_status', { cwd: sandbox });
+  check('git_status reports a non-repository', outside.value.isRepo === false && outside.text.includes('not a git repository'), outside.text);
+
+  const initialised = await runTool('git_init', { cwd: toolRepo, gitignore: 'node_modules/\n' });
+  check('git_init creates the repository', initialised.value.ok === true && initialised.value.created === true, initialised.text);
+  check('git_init names the identity gap in its text', initialised.text.includes('no commit identity'), initialised.text);
+
+  await runTool('git_config', { cwd: toolRepo, action: 'set', key: 'user.name', value: 'Tool User' });
+  const wroteEmail = await runTool('git_config', { cwd: toolRepo, action: 'set', key: 'user.email', value: 'tool@example.com' });
+  check('git_config writes and reports a value', wroteEmail.value.written === true && wroteEmail.text.includes('tool@example.com'), wroteEmail.text);
+  const readName = await runTool('git_config', { cwd: toolRepo, action: 'get', key: 'user.name' });
+  check('git_config reads a value back', readName.text === 'user.name=Tool User', readName.text);
+
+  writeFileSync(join(toolRepo, 'app.js'), 'console.log("hi");\n');
+  const untrackedStatus = await runTool('git_status', { cwd: toolRepo });
+  check(
+    'git_status lists the new file',
+    untrackedStatus.text.includes('untracked (2)') && untrackedStatus.text.includes('app.js (new)'),
+    untrackedStatus.text,
+  );
+
+  const stagedAll = await runTool('git_stage', { cwd: toolRepo, action: 'add' });
+  check('git_stage stages everything', stagedAll.value.ok === true && stagedAll.text.startsWith('staged:'), stagedAll.text);
+
+  const committed = await runTool('git_commit', {
+    cwd: toolRepo,
+    message: 'feat: add the app entry\n\nPrint a greeting on start.\n',
+  });
+  check('git_commit commits', committed.value.ok === true && /^committed [0-9a-f]{7} on main/.test(committed.text), committed.text);
+  check('git_commit renders the full message', committed.text.includes('feat: add the app entry') && committed.text.includes('Print a greeting'), committed.text);
+  check('git_commit reports the committed file', committed.text.includes('app.js'), committed.text);
+
+  const toolLog = await runTool('git_log', { cwd: toolRepo, limit: 5 });
+  check('git_log lists the commit', toolLog.text.includes('feat: add the app entry'), toolLog.text);
+
+  const toolPatch = await runTool('git_diff', { cwd: toolRepo, scope: 'last-commit' });
+  check('git_diff returns the patch', toolPatch.value.patch.includes('console.log'), toolPatch.text.slice(0, 200));
+
+  const toolBranches = await runTool('git_branch', { cwd: toolRepo, action: 'list' });
+  check('git_branch marks the current branch', toolBranches.text.includes('* main'), toolBranches.text);
+
+  const groupedInit = await runTool('git_init', { cwd: join(sandbox, 'grouped-repo'), gitignoreGroups: ['node', 'secrets'] });
+  check('git_init accepts curated gitignore groups', groupedInit.value.ok === true, groupedInit.text);
+  const groupedIgnore = readFileSync(join(sandbox, 'grouped-repo', '.gitignore'), 'utf8');
+  check('the group lines reach the file', groupedIgnore.includes('node_modules/') && groupedIgnore.includes('.env'), groupedIgnore.slice(0, 120));
+
+  const noRemote = await runTool('git_sync', { cwd: toolRepo, action: 'push' });
+  check('git_sync explains the missing remote', noRemote.value.ok === false && noRemote.text.includes('no remote'), noRemote.text);
+
+  const preview = await runTool('git_commit', { cwd: toolRepo, all: true, dryRun: true, message: 'chore: preview' });
+  check('git_commit dry run renders the message', preview.value.dryRun === true && preview.text.includes('dry run') && preview.text.includes('chore: preview'), preview.text);
+
+  const blanketDiscard = await runTool('git_stage', { cwd: toolRepo, action: 'discard' });
+  check('git_stage refuses a blanket discard', blanketDiscard.value.ok === false && blanketDiscard.text.startsWith('error:'), blanketDiscard.text);
+
+  section('panel bridge');
+  check(
+    'opens the exact Fetch route under /api',
+    panel.route?.path === '/api/dsh-git' && panel.route?.methods.includes('POST') && panel.route?.requestBody === 'buffered',
+    { path: panel.route?.path, methods: panel.route?.methods, body: panel.route?.requestBody },
+  );
+
+  /**
+   * Drive the real Fetch handler the way the browser does, so the transport
+   * checks (body parsing, envelope shape, status codes) are covered too.
+   */
+  const ask = async (endpoint, payload) => {
+    const request = new Request('http://localhost/api/dsh-git', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint, ...payload }),
+    });
+    const response = await panel.route.fetch(request);
+    return { status: response.status, body: await response.json() };
+  };
+
+  const malformed = await panel.route.fetch(
+    new Request('http://localhost/api/dsh-git', { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'not json' }),
+  );
+  check('rejects a body that is not JSON', malformed.status === 400, malformed.status);
+
+  const noEndpoint = await panel.route.fetch(
+    new Request('http://localhost/api/dsh-git', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+  );
+  check('rejects a body with no endpoint', noEndpoint.status === 400, noEndpoint.status);
+
+  const unknownEndpoint = await ask('nope', { sessionId: 'session-panel' });
+  check(
+    'refuses an unknown endpoint',
+    unknownEndpoint.status === 200 && unknownEndpoint.body.ok === false && unknownEndpoint.body.error.code === 'dsh-git/unknown-endpoint',
+    unknownEndpoint.body.error,
+  );
+
+  const unknownSession = await ask('status', { sessionId: 'session-gone' });
+  check(
+    'refuses a session that is not live',
+    unknownSession.body.ok === false && unknownSession.body.error.code === 'dsh-git/no-session',
+    unknownSession.body.error,
+  );
+
+  const panelStatus = (await ask('status', { sessionId: 'session-panel' })).body;
+  check('answers the panel with repository state', panelStatus.ok === true && panelStatus.value.isRepo === true, panelStatus);
+  check('folds the identity probe into the status round trip', panelStatus.value.identityConfigured === true, panelStatus.value);
+
+  const panelReadName = (await ask('config', { sessionId: 'session-panel', action: 'get', key: 'user.name' })).body;
+  check('reads configuration through the bridge', panelReadName.ok === true && panelReadName.value.value === 'Tool User', panelReadName.value);
+  const wroteName = (await ask('config', { sessionId: 'session-panel', action: 'set', key: 'user.name', value: 'Panel User', scope: 'local' })).body;
+  check('writes configuration through the bridge', wroteName.ok === true && wroteName.value.written === true, wroteName.value);
+  check(
+    'the written value reads back',
+    (await ask('config', { sessionId: 'session-panel', action: 'get', key: 'user.name' })).body.value.value === 'Panel User',
+  );
+
+  writeFileSync(join(toolRepo, 'panel.js'), 'export const panel = true;\n');
+  const stagedViaPanel = (await ask('stage', { sessionId: 'session-panel', action: 'add', paths: ['panel.js'] })).body;
+  check('stages through the bridge', stagedViaPanel.ok === true && stagedViaPanel.value.ok === true, stagedViaPanel.value);
+
+  const stagedDiff = (await ask('diff', { sessionId: 'session-panel', scope: 'staged', paths: ['panel.js'] })).body;
+  check('reads a staged diff through the bridge', stagedDiff.ok === true && stagedDiff.value.patch.includes('panel = true'), stagedDiff.value?.patch?.slice(0, 120));
+
+  const committedViaPanel = (await ask('commit', { sessionId: 'session-panel', message: 'feat(panel): add the panel entry' })).body;
+  check('commits through the bridge', committedViaPanel.ok === true && committedViaPanel.value.ok === true, committedViaPanel.value);
+
+  const logViaPanel = (await ask('log', { sessionId: 'session-panel', limit: 3 })).body;
+  check(
+    'lists history through the bridge',
+    logViaPanel.ok === true && logViaPanel.value.commits.some((entry) => entry.subject === 'feat(panel): add the panel entry'),
+    logViaPanel.value?.commits,
+  );
+
+  writeFileSync(join(toolRepo, 'fresh-preview.js'), 'export const preview = 1;\n');
+  const untrackedDiff = (await ask('diff', { sessionId: 'session-panel', scope: 'unstaged', paths: ['fresh-preview.js'] })).body;
+  check(
+    'shows an untracked file as additions instead of an empty pane',
+    untrackedDiff.ok === true && untrackedDiff.value.patch.includes('+export const preview = 1;'),
+    untrackedDiff.value?.patch?.slice(0, 200),
+  );
+
+  const panelGenerated = (await ask('generateMessage', { sessionId: 'session-panel' })).body;
+  check('reports why message generation is unavailable, not a crash', panelGenerated.ok === true && panelGenerated.value.ok === false, panelGenerated.value);
+
+  const explained = (await ask('explain', { sessionId: 'session-panel', scope: 'last-commit', path: 'panel.js' })).body;
+  check('reports why an explanation is unavailable, not a crash', explained.ok === true && explained.value.ok === false, explained.value);
+  const noPath = (await ask('explain', { sessionId: 'session-panel' })).body;
+  check('refuses an explanation with no path', noPath.ok === false && noPath.error.code === 'dsh-git/bad-request', noPath.error);
+
+  writeFileSync(join(toolRepo, 'package.json'), '{}\n');
+  const plan = (await ask('gitignore', { sessionId: 'session-panel' })).body;
+  check('plans .gitignore groups', plan.ok === true && plan.value.ok === true, plan.value);
+  check('detects the repository language', plan.value.groups.some((group) => group.id === 'node' && group.detected), plan.value.groups?.map((g) => [g.id, g.detected]));
+  const ignored = (await ask('gitignore', { sessionId: 'session-panel', action: 'write', groups: ['node', 'secrets'] })).body;
+  check('writes the selected groups', ignored.ok === true && ignored.value.added.includes('.env') && ignored.value.added.includes('dist/'), ignored.value);
+  check('does not repeat a line already present', !ignored.value.added.includes('node_modules/'), ignored.value.added);
+  check('reports the new state', ignored.value.plan.groups.find((group) => group.id === 'node').missing === 0, ignored.value.plan?.groups);
+  const ignoredAgain = (await ask('gitignore', { sessionId: 'session-panel', action: 'write', groups: ['node'] })).body;
+  check('is idempotent', ignoredAgain.value.unchanged === true, ignoredAgain.value);
+
+  const settingsRead = (await ask('settings', { sessionId: 'session-panel' })).body;
+  check('reads the plugin settings', settingsRead.ok === true && settingsRead.value.values.messageLanguage === 'auto', settingsRead.value);
+  check('reports the config row it would write', settingsRead.value.entryId === 'dsh-git' && settingsRead.value.writable === true, settingsRead.value);
+  const settingsWrite = (await ask('settings', { sessionId: 'session-panel', action: 'set', values: { messageLanguage: 'zh', messageStyle: 'plain', messageTemplate: '以模块名开头' } })).body;
+  check('persists recognized settings', settingsWrite.ok === true && settingsWrite.value.ok === true && settingsWrite.value.saved.messageLanguage === 'zh', settingsWrite.value);
+  check('writes through the configuration editor', configWrites.length === 1 && configWrites[0].entry.options.id === 'dsh-git', configWrites.length);
+  check('restates the whole config, not just the change', configWrites[0].next.defaultBranch === 'main' && configWrites[0].next.messageTemplate === '以模块名开头', configWrites[0]?.next && Object.keys(configWrites[0].next));
+  const settingsRejected = (await ask('settings', { sessionId: 'session-panel', action: 'set', values: { messageLanguage: 'klingon' } })).body;
+  check('ignores an unrecognized setting value', settingsRejected.value.ok === false, settingsRejected.value);
+  const halfRoute = (await ask('settings', { sessionId: 'session-panel', action: 'set', values: { provider: 'x', model: '' } })).body;
+  check('refuses half a model route', halfRoute.value.ok === false && halfRoute.value.error.includes('together'), halfRoute.value);
+
+  const undone = (await ask('reset', { sessionId: 'session-panel', mode: 'soft' })).body;
+  check('undoes the last commit through the bridge', undone.ok === true && undone.value.ok === true && undone.value.undone.subject === 'feat(panel): add the panel entry', undone.value);
+  check('reports the state after undoing', undone.value.staged >= 1, undone.value);
+  const restored = (await ask('commit', { sessionId: 'session-panel', message: 'feat(panel): add the panel entry' })).body;
+  check('re-commits what was undone', restored.ok === true && restored.value.ok === true, restored.value);
+
+  section('init with a first commit');
+  const anonymous = join(sandbox, 'anonymous');
+  const skipped = await core.init({ cwd: anonymous, initialCommitMessage: 'chore: initial commit' });
+  check(
+    'skips the first commit when no identity is configured',
+    skipped.ok === true && skipped.initialCommit === null && typeof skipped.initialCommitError === 'string',
+    skipped,
+  );
+  check('explains how to fix it', skipped.initialCommitError.includes('git_config'), skipped.initialCommitError);
+
+  await core.config({ cwd: sandbox, action: 'set', scope: 'global', key: 'user.name', value: 'Test User' });
+  await core.config({ cwd: sandbox, action: 'set', scope: 'global', key: 'user.email', value: 'test@example.com' });
+
+  const fresh = join(sandbox, 'fresh');
+  const firstInit = await core.init({
+    cwd: fresh,
+    initialBranch: 'trunk',
+    initialCommitMessage: 'chore: initial commit',
+    gitignore: 'dist/\n',
+  });
+  check('creates and commits', firstInit.ok === true && typeof firstInit.initialCommit === 'string' && firstInit.initialCommit.length > 0, firstInit);
+  check('uses the requested branch', firstInit.branch === 'trunk', firstInit.branch);
+  const freshLog = await core.log({ cwd: fresh });
+  check('has one commit', freshLog.commits.length === 1 && freshLog.commits[0].subject === 'chore: initial commit', freshLog.commits);
+
+  section('undo the last commit');
+  const undoRepo = join(sandbox, 'undo-repo');
+  await core.init({ cwd: undoRepo });
+  await core.config({ cwd: undoRepo, action: 'set', key: 'user.name', value: 'Undo User' });
+  await core.config({ cwd: undoRepo, action: 'set', key: 'user.email', value: 'undo@example.com' });
+  check('refuses to undo in a repository with no commits', (await core.resetLastCommit({ cwd: undoRepo })).ok === false);
+
+  writeFileSync(join(undoRepo, 'a.txt'), 'one\n');
+  await core.stage({ cwd: undoRepo, action: 'add' });
+  const firstEver = await core.commit({ cwd: undoRepo, message: 'chore: first' });
+  check('makes a root commit', firstEver.ok === true, firstEver.error);
+  const rootMixed = await core.resetLastCommit({ cwd: undoRepo, mode: 'mixed' });
+  check('refuses a non-soft undo of the first commit', rootMixed.ok === false && rootMixed.error.includes('first commit'), rootMixed.error);
+  const rootSoft = await core.resetLastCommit({ cwd: undoRepo, mode: 'soft' });
+  check('undoes the first commit softly', rootSoft.ok === true && rootSoft.firstCommit === true, rootSoft);
+  const afterRootUndo = await core.status({ cwd: undoRepo });
+  check('leaves the first commit\'s files staged', afterRootUndo.staged.length === 1, afterRootUndo.staged);
+  await core.commit({ cwd: undoRepo, message: 'chore: first' });
+
+  writeFileSync(join(undoRepo, 'a.txt'), 'two\n');
+  await core.commit({ cwd: undoRepo, all: true, message: 'feat: second' });
+  writeFileSync(join(undoRepo, 'a.txt'), 'three\n');
+  await core.commit({ cwd: undoRepo, all: true, message: 'feat: third' });
+  check('has three commits', (await core.log({ cwd: undoRepo })).commits.length === 3);
+
+  const softUndo = await core.resetLastCommit({ cwd: undoRepo, mode: 'soft' });
+  check('soft undo drops one commit', softUndo.ok === true && softUndo.undone.subject === 'feat: third', softUndo);
+  check('soft undo keeps the change staged', softUndo.staged === 1 && softUndo.unstaged === 0, softUndo);
+  check('history is back to two commits', (await core.log({ cwd: undoRepo })).commits.length === 2);
+
+  await core.commit({ cwd: undoRepo, message: 'feat: third' });
+  const mixedUndo = await core.resetLastCommit({ cwd: undoRepo, mode: 'mixed' });
+  check('mixed undo unstages the change', mixedUndo.ok === true && mixedUndo.staged === 0 && mixedUndo.unstaged === 1, mixedUndo);
+  await core.commit({ cwd: undoRepo, all: true, message: 'feat: third' });
+
+  const hardUndo = await core.resetLastCommit({ cwd: undoRepo, mode: 'hard' });
+  check('hard undo keeps the tree clean', hardUndo.ok === true && hardUndo.unstaged === 0 && hardUndo.staged === 0, hardUndo);
+  check('hard undo discarded the edit', (await core.diff({ cwd: undoRepo, scope: 'unstaged' })).patch.trim() === '');
+  check('the published flag is false without an upstream', hardUndo.published === false, hardUndo);
+
+  section('gitignore planning');
+  const ignoreRepo = join(sandbox, 'ignore-repo');
+  await core.init({ cwd: ignoreRepo });
+  writeFileSync(join(ignoreRepo, 'package.json'), '{}\n');
+  writeFileSync(join(ignoreRepo, 'requirements.txt'), 'requests\n');
+  const ignorePlan = await core.gitignorePlan({ cwd: ignoreRepo });
+  check('plans groups for a repository', ignorePlan.ok === true && ignorePlan.exists === false, ignorePlan);
+  check('detects node and python', ignorePlan.groups.find((g) => g.id === 'node').detected && ignorePlan.groups.find((g) => g.id === 'python').detected, ignorePlan.groups?.map((g) => [g.id, g.detected]));
+  check('does not claim rust', ignorePlan.groups.find((g) => g.id === 'rust').detected === false);
+  check('suggests the detected groups', ignorePlan.suggested.includes('node') && ignorePlan.suggested.includes('python'), ignorePlan.suggested);
+
+  const wrote = await core.writeGitignore({ cwd: ignoreRepo, entries: ['node_modules/', 'dist/', '.env'] });
+  check('writes the entries', wrote.ok === true && wrote.added.length === 3, wrote);
+  const wroteAgain = await core.writeGitignore({ cwd: ignoreRepo, entries: ['node_modules/', 'dist/'] });
+  check('adds nothing twice', wroteAgain.ok === true && wroteAgain.unchanged === true, wroteAgain);
+  const ignoreFile = readFileSync(join(ignoreRepo, '.gitignore'), 'utf8');
+  check('the file has each line once', ignoreFile.split('\n').filter((l) => l === 'node_modules/').length === 1, ignoreFile);
+  check('reports the file as existing', (await core.gitignorePlan({ cwd: ignoreRepo })).exists === true);
+  check('counts what is still missing', (await core.gitignorePlan({ cwd: ignoreRepo })).groups.find((g) => g.id === 'node').missing > 0);
+  check('rejects an empty selection', (await core.writeGitignore({ cwd: ignoreRepo, entries: [] })).ok === false);
+
+  section('explain one file change');
+  const explainLlm = {
+    async *stream(options) {
+      check('sends the patch to the model', options.messages[0].content[0].text.includes('a.txt'), options.messages[0].content[0].text.slice(0, 80));
+      yield { type: 'text-delta', index: 0, text: '```\n- rewrites a.txt\n- nothing else\n```' };
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    },
+  };
+  const fileSummary = await explainFileChange({
+    llm: explainLlm,
+    route: { provider: 'p', model: 'm' },
+    path: 'a.txt',
+    patch: '--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-one\n+two\n',
+  });
+  check('explains a file change', fileSummary.ok === true && fileSummary.summary.startsWith('- rewrites a.txt'), fileSummary);
+  check('strips the code fence', !fileSummary.summary.includes('```'));
+  check('names the file in meta', fileSummary.meta?.path === 'a.txt', fileSummary.meta);
+  check('rejects an empty patch', (await explainFileChange({ llm: explainLlm, route: { provider: 'p', model: 'm' }, path: 'x', patch: '  ' })).ok === false);
+  check('rejects a missing model service', (await explainFileChange({ llm: null, route: { provider: 'p', model: 'm' }, path: 'x', patch: 'y' })).ok === false);
+  check('normalizes a labelled explanation', normalizeExplanation('Summary: - one thing') === '- one thing');
+  check('drops blank lines', normalizeExplanation('- a\n\n\n- b') === '- a\n- b');
+
+  section('detached HEAD and unborn repositories');
+  const unborn = join(sandbox, 'unborn');
+  await core.init({ cwd: unborn });
+  const unbornStatus = await core.status({ cwd: unborn });
+  check('reports an unborn branch', unbornStatus.initial === true && unbornStatus.branch === 'main', unbornStatus);
+  const unbornLog = await core.log({ cwd: unborn });
+  check('logs nothing without failing', unbornLog.ok === true && unbornLog.commits.length === 0, unbornLog);
+  const unbornAll = await core.diff({ cwd: unborn, scope: 'all' });
+  check('reads "all" without HEAD', unbornAll.ok === true, unbornAll.error);
+  check('explains the fallback', typeof unbornAll.note === 'string' && unbornAll.note.includes('no commit yet'), unbornAll.note);
+} finally {
+  rmSync(sandbox, { recursive: true, force: true });
+}
+
+process.stdout.write(`\n${checks - failures}/${checks} checks passed\n`);
+if (failures > 0) {
+  process.stdout.write(`${failures} check(s) failed\n`);
+  process.exit(1);
+}
