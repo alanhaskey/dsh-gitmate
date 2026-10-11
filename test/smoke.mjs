@@ -606,6 +606,15 @@ try {
   const stylesheet = /children: `([\s\S]*?)`,\n      \}\);/.exec(clientSourceForStyles)?.[1] ?? '';
   check('the stylesheet was found', stylesheet.length > 4000, stylesheet.length);
   check('no backtick survives inside the stylesheet', !stylesheet.includes('`'));
+  // State-coloured actions must tint with the state alias and keep the label on
+  // the readable alias; the state colours are mid-tone in both themes, so using
+  // one as text on the base background lands near 2:1 contrast.
+  for (const [name, token] of [['success', '--dsw-alias-state-success-primary'], ['warn', '--dsw-alias-state-warn-primary']]) {
+    const rule = new RegExp(`\\.dsg-btn-${name} \\{[^}]*\\}`).exec(clientSourceForStyles)?.[0] ?? '';
+    check(`the ${name} action tints with its state alias`, rule.includes(`color-mix(in srgb, var(${token})`), rule);
+    check(`the ${name} action keeps a readable label`, rule.includes('color:var(--dsw-alias-label-primary)'), rule);
+    check(`the ${name} action declares a fallback first`, /background:var\(--dsw-alias-bg-base\);\s*background:color-mix/.test(rule), rule);
+  }
   check(
     'the stylesheet uses no literal colour',
     !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(stylesheet),
