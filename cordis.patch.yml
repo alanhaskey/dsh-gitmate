@@ -27,7 +27,5 @@
         commandTimeoutMs: 60000
         # Add a Signed-off-by trailer to every commit this plugin creates.
         signoff: false
-        # Optional provider/model pair for message generation. Omit both to use
-        # the session's default model.
-        # provider: deepseek-account
-        # model: deepseek-flash
+        # Message generation always uses the session's default model, so there is
+        # no provider/model pair to configure here.

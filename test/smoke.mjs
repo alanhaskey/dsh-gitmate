@@ -19,7 +19,9 @@ import {
   languageRule,
   normalizeCommitMessage,
   normalizeExplanation,
+  normalizeIgnorePatterns,
   resolveRoute,
+  suggestIgnorePatterns,
 } from '../lib/messages.js';
 import * as plugin from '../lib/plugin.js';
 
@@ -561,6 +563,55 @@ try {
   const blanketDiscard = await runTool('git_stage', { cwd: toolRepo, action: 'discard' });
   check('git_stage refuses a blanket discard', blanketDiscard.value.ok === false && blanketDiscard.text.startsWith('error:'), blanketDiscard.text);
 
+  section('the panel only names theme tokens that exist');
+  // The published alias set, exactly as the live client Theme provider reports it
+  // (cordis_inspect_query, platform=client, provider=Theme, method=listTokens).
+  // A token that is not in this list resolves to nothing, which fails silently:
+  // `color: var(--made-up)` computes to `unset`, so the text inherits whatever it
+  // is sitting on. A chip filled with the brand alias — near-white in the dark
+  // theme — then inherits near-white text and renders as a blank white block.
+  const THEME_TOKENS = new Set([
+    '--dsw-alias-bg-base',
+    '--dsw-alias-bg-layer-1',
+    '--dsw-alias-bg-layer-2',
+    '--dsw-alias-bg-overlay',
+    '--dsw-alias-border-l1',
+    '--dsw-alias-border-l2',
+    '--dsw-alias-brand-primary',
+    '--dsw-alias-label-primary',
+    '--dsw-alias-label-secondary',
+    '--dsw-alias-state-error-primary',
+    '--dsw-alias-state-idle-primary',
+    '--dsw-alias-state-success-primary',
+    '--dsw-alias-state-warn-primary',
+    '--dsw-specific-sidebar-fill',
+  ]);
+  const clientSourceForStyles = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
+  const referenced = [...new Set([...clientSourceForStyles.matchAll(/var\((--dsw-[a-z0-9-]+)/g)].map((match) => match[1]))];
+  check('references at least one token', referenced.length >= 8, referenced.length);
+  check(
+    'every referenced token is published by the theme',
+    referenced.every((token) => THEME_TOKENS.has(token)),
+    referenced.filter((token) => !THEME_TOKENS.has(token)),
+  );
+  // The brand alias is the theme's ink colour, so the text on it is bg-base —
+  // the same pairing the primary button has always used.
+  check(
+    'the brand fill is paired with a real inverse',
+    /\.dsg-choice-on \{[^}]*background:var\(--dsw-alias-brand-primary\)[^}]*color:var\(--dsw-alias-bg-base\)[^}]*\}/.test(clientSourceForStyles),
+    (clientSourceForStyles.match(/\.dsg-choice-on \{[^}]*\}/) ?? ['(rule not found)'])[0],
+  );
+  // A stylesheet lives inside a template literal, so a stray backtick in a
+  // comment ends it early and takes the bundle down with it.
+  const stylesheet = /children: `([\s\S]*?)`,\n      \}\);/.exec(clientSourceForStyles)?.[1] ?? '';
+  check('the stylesheet was found', stylesheet.length > 4000, stylesheet.length);
+  check('no backtick survives inside the stylesheet', !stylesheet.includes('`'));
+  check(
+    'the stylesheet uses no literal colour',
+    !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(stylesheet),
+    (stylesheet.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g) ?? []).slice(0, 5),
+  );
+
   section('package manifest agrees with itself');
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const clientSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
@@ -796,12 +847,24 @@ try {
   const plan = (await ask('gitignore', { sessionId: 'session-panel' })).body;
   check('plans .gitignore groups', plan.ok === true && plan.value.ok === true, plan.value);
   check('detects the repository language', plan.value.groups.some((group) => group.id === 'node' && group.detected), plan.value.groups?.map((g) => [g.id, g.detected]));
-  const ignored = (await ask('gitignore', { sessionId: 'session-panel', action: 'write', groups: ['node', 'secrets'] })).body;
-  check('writes the selected groups', ignored.ok === true && ignored.value.added.includes('.env') && ignored.value.added.includes('dist/'), ignored.value);
+  const nodeMissingBefore = plan.value.groups.find((group) => group.id === 'node').missing;
+  const ignored = (await ask('gitignore', { sessionId: 'session-panel', action: 'write', entries: ['dist/', '.env', 'node_modules/'] })).body;
+  check('writes the patterns it is given', ignored.ok === true && ignored.value.added.includes('.env') && ignored.value.added.includes('dist/'), ignored.value);
   check('does not repeat a line already present', !ignored.value.added.includes('node_modules/'), ignored.value.added);
-  check('reports the new state', ignored.value.plan.groups.find((group) => group.id === 'node').missing === 0, ignored.value.plan?.groups);
-  const ignoredAgain = (await ask('gitignore', { sessionId: 'session-panel', action: 'write', groups: ['node'] })).body;
+  // Every pattern that was actually written stops counting as missing; one of the
+  // three was already in the file, so the drop is measured, not assumed.
+  const nodeEntries = plan.value.groups.find((group) => group.id === 'node').entries;
+  const addedToNode = ignored.value.added.filter((entry) => nodeEntries.includes(entry)).length;
+  const nodeMissingAfter = ignored.value.plan.groups.find((group) => group.id === 'node').missing;
+  check(
+    'reports the new state',
+    addedToNode > 0 && nodeMissingAfter === nodeMissingBefore - addedToNode,
+    { before: nodeMissingBefore, after: nodeMissingAfter, addedToNode, added: ignored.value.added },
+  );
+  const ignoredAgain = (await ask('gitignore', { sessionId: 'session-panel', action: 'write', entries: ['dist/'] })).body;
   check('is idempotent', ignoredAgain.value.unchanged === true, ignoredAgain.value);
+  const noEntries = (await ask('gitignore', { sessionId: 'session-panel', action: 'write', entries: [] })).body;
+  check('refuses a write with nothing in it', noEntries.ok === false, noEntries);
 
   const settingsRead = (await ask('settings', { sessionId: 'session-panel' })).body;
   check('reads the plugin settings', settingsRead.ok === true && settingsRead.value.values.messageLanguage === 'auto', settingsRead.value);
@@ -812,8 +875,59 @@ try {
   check('restates the whole config, not just the change', configWrites[0].next.defaultBranch === 'main' && configWrites[0].next.messageTemplate === '以模块名开头', configWrites[0]?.next && Object.keys(configWrites[0].next));
   const settingsRejected = (await ask('settings', { sessionId: 'session-panel', action: 'set', values: { messageLanguage: 'klingon' } })).body;
   check('ignores an unrecognized setting value', settingsRejected.value.ok === false, settingsRejected.value);
-  const halfRoute = (await ask('settings', { sessionId: 'session-panel', action: 'set', values: { provider: 'x', model: '' } })).body;
-  check('refuses half a model route', halfRoute.value.ok === false && halfRoute.value.error.includes('together'), halfRoute.value);
+  // Message generation always runs on the session's model, so the panel exposes
+  // no provider/model pair at all and must not accept one.
+  const modelAttempt = (await ask('settings', { sessionId: 'session-panel', action: 'set', values: { provider: 'x', model: 'y' } })).body;
+  check('refuses a model override', modelAttempt.value.ok === false, modelAttempt.value);
+  check(
+    'exposes no provider or model setting to the panel',
+    !Object.hasOwn(settingsRead.value.values, 'provider') && !Object.hasOwn(settingsRead.value.values, 'model'),
+    Object.keys(settingsRead.value.values),
+  );
+  const branchAttempt = (await ask('settings', { sessionId: 'session-panel', action: 'set', values: { defaultBranch: 'trunk' } })).body;
+  check('only accepts a branch the panel can offer', branchAttempt.value.ok === false, branchAttempt.value);
+  const branchOk = (await ask('settings', { sessionId: 'session-panel', action: 'set', values: { defaultBranch: 'master' } })).body;
+  check('accepts the other offered branch', branchOk.value.ok === true && branchOk.value.saved.defaultBranch === 'master', branchOk.value);
+
+  section('gitignore inference through the bridge');
+  // Its own directory, so "nothing there yet" is a fact rather than an accident
+  // of what earlier sections already wrote.
+  const ignoreRepo = join(sandbox, 'ignore-repo');
+  mkdirSync(join(ignoreRepo, 'node_modules', 'left-pad'), { recursive: true });
+  writeFileSync(join(ignoreRepo, 'package.json'), '{"name":"ignore-repo","version":"1.0.0"}\n');
+  sessionCwds['session-ignore'] = ignoreRepo;
+
+  const inferred = (await ask('gitignoreSuggest', { sessionId: 'session-ignore', mode: 'init' })).body;
+  check(
+    'infers patterns without a model, falling back to the built-in rules',
+    inferred.value.ok === true && inferred.value.source === 'heuristic' && inferred.value.patterns.length > 0,
+    { source: inferred.value.source, count: inferred.value.patterns?.length },
+  );
+  check('says why it fell back rather than pretending', /no model/i.test(inferred.value.note ?? ''), inferred.value.note);
+  check('proposes the Node artefacts this project needs', inferred.value.patterns.includes('node_modules/'), inferred.value.patterns);
+  check('reports that no .gitignore exists yet', inferred.value.exists === false, inferred.value.exists);
+  check('everything proposed would be added', inferred.value.added.length === inferred.value.patterns.length, inferred.value.added);
+
+  const ignoreWritten = (await ask('gitignore', { sessionId: 'session-ignore', action: 'write', entries: inferred.value.added })).body;
+  check('writes what the inference proposed', ignoreWritten.value.ok === true && ignoreWritten.value.added.length > 0, ignoreWritten.value);
+  check(
+    'the file now exists on disk',
+    readFileSync(join(ignoreRepo, '.gitignore'), 'utf8').includes('node_modules/'),
+    readFileSync(join(ignoreRepo, '.gitignore'), 'utf8').slice(0, 60),
+  );
+
+  const inferredAgain = (await ask('gitignoreSuggest', { sessionId: 'session-ignore', mode: 'optimize' })).body;
+  check('a second pass sees the file it just wrote', inferredAgain.value.exists === true, inferredAgain.value.exists);
+  check('and has nothing left to add', inferredAgain.value.ok === true && inferredAgain.value.added.length === 0, inferredAgain.value.added);
+
+  // A user's own line must survive both passes.
+  writeFileSync(join(ignoreRepo, '.gitignore'), `${readFileSync(join(ignoreRepo, '.gitignore'), 'utf8')}my-own-note.txt\n`);
+  await ask('gitignoreSuggest', { sessionId: 'session-ignore', mode: 'optimize' });
+  check(
+    'never rewrites a line the user wrote',
+    readFileSync(join(ignoreRepo, '.gitignore'), 'utf8').includes('my-own-note.txt'),
+    readFileSync(join(ignoreRepo, '.gitignore'), 'utf8').slice(-40),
+  );
 
   const undone = (await ask('reset', { sessionId: 'session-panel', mode: 'soft' })).body;
   check('undoes the last commit through the bridge', undone.ok === true && undone.value.ok === true && undone.value.undone.subject === 'feat(panel): add the panel entry', undone.value);
@@ -969,26 +1083,133 @@ try {
   check('keeps a multi-paragraph body', withBody.subject === 'feat: with a body' && withBody.body === 'Why it changed, in a paragraph.', withBody);
   check('defaults to HEAD', withBody.ok === true && withBody.hash.length === 40, withBody.hash);
 
+  section('a draft turns generation into completion');
+  const sampleBundle = {
+    branch: 'main',
+    recentCommits: ['feat: earlier'],
+    staged: { files: [{ path: 'app.js', additions: 2, deletions: 1 }], patch: 'diff --git a/app.js b/app.js\n+a\n-b\n' },
+    unstaged: null,
+    untracked: [],
+  };
+  const plainPrompt = buildUserPrompt(sampleBundle);
+  const draftedPrompt = buildUserPrompt(sampleBundle, '  fix the login redirect  ');
+  check('an empty draft leaves the prompt as a plain request', plainPrompt.includes('Write the commit message for the change'), plainPrompt.slice(0, 80));
+  check('an empty draft carries no draft field', !plainPrompt.includes('authorDraft'), plainPrompt);
+  check('a draft is handed over verbatim', draftedPrompt.includes('"authorDraft": "fix the login redirect"'), draftedPrompt);
+  check('a draft changes the instruction to completion', draftedPrompt.includes('Complete and improve it'), draftedPrompt.slice(0, 120));
+
+  /** A model stub that records the request it was given. */
+  const capturingLlm = (reply, sink) => ({
+    stream: async function* (request) {
+      sink.push(request);
+      yield { type: 'text-delta', text: reply };
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    },
+  });
+  const draftRoute = { provider: 'test', model: 'test-model' };
+
+  const withoutDraft = [];
+  const plainMessage = await generateCommitMessage({
+    llm: capturingLlm('feat: add a thing', withoutDraft),
+    route: draftRoute,
+    bundle: sampleBundle,
+  });
+  check('generation still works without a draft', plainMessage.ok === true && plainMessage.message === 'feat: add a thing', plainMessage);
+  check('no draft means no draft rule', !withoutDraft[0].system.includes('authorDraft'), withoutDraft[0].system.slice(-120));
+
+  const withDraft = [];
+  const fromDraft = await generateCommitMessage({
+    llm: capturingLlm('fix(auth): keep the login redirect', withDraft),
+    route: draftRoute,
+    bundle: sampleBundle,
+    draft: 'fix login redirect',
+  });
+  check('a draft produces a message', fromDraft.ok === true && fromDraft.message === 'fix(auth): keep the login redirect', fromDraft);
+  check('the draft rule forbids replacing the author\'s wording', withDraft[0].system.includes('Never replace their description'), withDraft[0].system.slice(-260));
+  check('the draft reaches the model', JSON.stringify(withDraft[0].messages).includes('fix login redirect'), withDraft[0].messages);
+
+  section('ignore patterns are filtered before they are written');
+  const keep = normalizeIgnorePatterns(
+    [
+      '\`\`\`',
+      'node_modules/',
+      'dist/',
+      '*.log',
+      '.env.local',
+      'coverage/',
+      '!keep-me.json',
+      '# a comment the model added',
+      'Here is the list you asked for',
+      '',
+      '*',
+      '**',
+      '/*',
+      '*.json',
+      '*.ts',
+      '*.md',
+      'src/',
+      '/src/',
+      'lib/',
+      'node_modules/',
+      '/src/generated/',
+      '\`\`\`',
+    ].join('\n'),
+  );
+  check('keeps the artefact patterns', keep.includes('node_modules/') && keep.includes('dist/') && keep.includes('.env.local'), keep);
+  check('keeps a negation and a nested path', keep.includes('!keep-me.json') && keep.includes('/src/generated/'), keep);
+  check('drops a fence, a comment and prose', !keep.some((entry) => entry.includes('\`') || entry.startsWith('#') || entry.includes(' ')), keep);
+  check('drops patterns that would hide the whole tree', !keep.includes('*') && !keep.includes('**') && !keep.includes('/*'), keep);
+  check('drops a bare source extension', !keep.includes('*.json') && !keep.includes('*.ts') && !keep.includes('*.md'), keep);
+  check('drops a whole source directory', !keep.includes('src/') && !keep.includes('/src/') && !keep.includes('lib/'), keep);
+  check('de-duplicates', keep.filter((entry) => entry === 'node_modules/').length === 1, keep);
+
+  const suggested = await suggestIgnorePatterns({
+    llm: capturingLlm('dist/\n.cache/\n*.log', []),
+    route: draftRoute,
+    shape: { root: '/tmp/x', top: ['src', 'package.json'], files: ['src/index.js'], manifests: { 'package.json': '{}' } },
+    mode: 'init',
+  });
+  check('a model reply becomes a pattern list', suggested.ok === true && suggested.patterns.join(',') === 'dist/,.cache/,*.log', suggested);
+
+  const optimizeAsk = [];
+  await suggestIgnorePatterns({
+    llm: capturingLlm('dist/', optimizeAsk),
+    route: draftRoute,
+    shape: { root: '/tmp/x', top: [], files: [], manifests: {} },
+    existing: 'node_modules/\n',
+    mode: 'optimize',
+  });
+  const initAsk = [];
+  await suggestIgnorePatterns({
+    llm: capturingLlm('dist/', initAsk),
+    route: draftRoute,
+    shape: { root: '/tmp/x', top: [], files: [], manifests: {} },
+    existing: 'node_modules/\n',
+    mode: 'init',
+  });
+  check('an optimize pass is shown the current file', JSON.stringify(optimizeAsk[0].messages).includes('existingGitignore'), optimizeAsk[0].messages);
+  check('an init pass is not', !JSON.stringify(initAsk[0].messages).includes('existingGitignore'), initAsk[0].messages);
+
   section('gitignore planning');
-  const ignoreRepo = join(sandbox, 'ignore-repo');
-  await core.init({ cwd: ignoreRepo });
-  writeFileSync(join(ignoreRepo, 'package.json'), '{}\n');
-  writeFileSync(join(ignoreRepo, 'requirements.txt'), 'requests\n');
-  const ignorePlan = await core.gitignorePlan({ cwd: ignoreRepo });
+  const planRepo = join(sandbox, 'gitignore-plan');
+  await core.init({ cwd: planRepo });
+  writeFileSync(join(planRepo, 'package.json'), '{}\n');
+  writeFileSync(join(planRepo, 'requirements.txt'), 'requests\n');
+  const ignorePlan = await core.gitignorePlan({ cwd: planRepo });
   check('plans groups for a repository', ignorePlan.ok === true && ignorePlan.exists === false, ignorePlan);
   check('detects node and python', ignorePlan.groups.find((g) => g.id === 'node').detected && ignorePlan.groups.find((g) => g.id === 'python').detected, ignorePlan.groups?.map((g) => [g.id, g.detected]));
   check('does not claim rust', ignorePlan.groups.find((g) => g.id === 'rust').detected === false);
   check('suggests the detected groups', ignorePlan.suggested.includes('node') && ignorePlan.suggested.includes('python'), ignorePlan.suggested);
 
-  const wrote = await core.writeGitignore({ cwd: ignoreRepo, entries: ['node_modules/', 'dist/', '.env'] });
+  const wrote = await core.writeGitignore({ cwd: planRepo, entries: ['node_modules/', 'dist/', '.env'] });
   check('writes the entries', wrote.ok === true && wrote.added.length === 3, wrote);
-  const wroteAgain = await core.writeGitignore({ cwd: ignoreRepo, entries: ['node_modules/', 'dist/'] });
+  const wroteAgain = await core.writeGitignore({ cwd: planRepo, entries: ['node_modules/', 'dist/'] });
   check('adds nothing twice', wroteAgain.ok === true && wroteAgain.unchanged === true, wroteAgain);
-  const ignoreFile = readFileSync(join(ignoreRepo, '.gitignore'), 'utf8');
+  const ignoreFile = readFileSync(join(planRepo, '.gitignore'), 'utf8');
   check('the file has each line once', ignoreFile.split('\n').filter((l) => l === 'node_modules/').length === 1, ignoreFile);
-  check('reports the file as existing', (await core.gitignorePlan({ cwd: ignoreRepo })).exists === true);
-  check('counts what is still missing', (await core.gitignorePlan({ cwd: ignoreRepo })).groups.find((g) => g.id === 'node').missing > 0);
-  check('rejects an empty selection', (await core.writeGitignore({ cwd: ignoreRepo, entries: [] })).ok === false);
+  check('reports the file as existing', (await core.gitignorePlan({ cwd: planRepo })).exists === true);
+  check('counts what is still missing', (await core.gitignorePlan({ cwd: planRepo })).groups.find((g) => g.id === 'node').missing > 0);
+  check('rejects an empty selection', (await core.writeGitignore({ cwd: planRepo, entries: [] })).ok === false);
 
   section('explain one file change');
   const explainLlm = {
