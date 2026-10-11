@@ -7,7 +7,7 @@
  */
 
 import { execFile } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -560,6 +560,34 @@ try {
 
   const blanketDiscard = await runTool('git_stage', { cwd: toolRepo, action: 'discard' });
   check('git_stage refuses a blanket discard', blanketDiscard.value.ok === false && blanketDiscard.text.startsWith('error:'), blanketDiscard.text);
+
+  section('package manifest agrees with itself');
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const clientSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
+  const declaredId = /__ModuleLoader__\.load\(\{\s*(?:\/\/[^\n]*\n\s*)*id:\s*'([^']+)'/.exec(clientSource)?.[1];
+  // dsh-client-modules keys the browser module table by PACKAGE NAME: it registers
+  // a bundle under the id the bundle declares and looks it up by the entry's
+  // package name. When those disagree the graph row has no factory and the whole
+  // renderer refuses to boot — the app opens in startup recovery instead of
+  // loading. That is exactly what renaming the package once did here.
+  check('the client bundle declares the package name as its module id', declaredId === manifest.name, {
+    declared: declaredId,
+    packageName: manifest.name,
+  });
+  check('the manifest is no longer private', manifest.private !== true);
+  check('the bundle patch exists', existsSync(new URL(`../${manifest.dsh.bundle.patch.replace('./', '')}`, import.meta.url)));
+  check('the client entry point exists', existsSync(new URL(`../${manifest.exports['./client'].replace('./', '')}`, import.meta.url)));
+  check('the host entry point exists', existsSync(new URL(`../${manifest.main.replace('./', '')}`, import.meta.url)));
+  check('the icon exists', existsSync(new URL(`../${manifest.icon.replace('./', '')}`, import.meta.url)));
+  for (const locale of ['zh', 'en']) {
+    check(`the ${locale} locale ships`, existsSync(new URL(`../locale/${locale}.json`, import.meta.url)));
+  }
+  // Every file a fresh install needs must be reachable through `files`, or the
+  // published package installs without its own entry point.
+  for (const needed of ['lib', 'locale', 'cordis.patch.yml', 'icon.svg']) {
+    check(`${needed} is included in the published files`, manifest.files.includes(needed), manifest.files);
+  }
+  check('the loader row names the package', readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8').includes(`name: '${manifest.name}'`));
 
   section('commit graph lanes');
   const linear = buildGraph([{ hash: 'c', parents: ['b'] }, { hash: 'b', parents: ['a'] }, { hash: 'a', parents: [] }]);
