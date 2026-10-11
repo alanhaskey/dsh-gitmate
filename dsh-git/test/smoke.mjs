@@ -906,6 +906,41 @@ try {
   check('hard undo discarded the edit', (await core.diff({ cwd: undoRepo, scope: 'unstaged' })).patch.trim() === '');
   check('the published flag is false without an upstream', hardUndo.published === false, hardUndo);
 
+  section('rewind to a chosen commit');
+  const rewindRepo = join(sandbox, 'rewind-repo');
+  await core.init({ cwd: rewindRepo });
+  await core.config({ cwd: rewindRepo, action: 'set', key: 'user.name', value: 'Rewind User' });
+  await core.config({ cwd: rewindRepo, action: 'set', key: 'user.email', value: 'rewind@example.com' });
+  for (const [name, message] of [['one.txt', 'feat: one'], ['two.txt', 'feat: two'], ['three.txt', 'feat: three']]) {
+    writeFileSync(join(rewindRepo, name), `${name}\n`);
+    await core.commit({ cwd: rewindRepo, all: true, message });
+  }
+  const rewindLog = await core.log({ cwd: rewindRepo, limit: 10 });
+  const middle = rewindLog.commits[1].hash;
+  check('refuses a target that is not a commit', (await core.resetLastCommit({ cwd: rewindRepo, target: 'nope' })).ok === false);
+
+  const rewound = await core.resetLastCommit({ cwd: rewindRepo, mode: 'soft', target: middle });
+  check('rewinds to the named commit', rewound.ok === true && rewound.target === middle, rewound);
+  check('says how many commits it dropped', rewound.dropped === 1, rewound);
+  check('keeps the dropped work staged', rewound.staged === 1, rewound);
+  const afterRewind = await core.log({ cwd: rewindRepo, limit: 10 });
+  check('history is back to two commits', afterRewind.commits.length === 2, afterRewind.commits.map((c) => c.subject));
+  check('the newest commit is the target', afterRewind.commits[0].hash === middle, afterRewind.commits[0]);
+
+  section('one commit in full');
+  const detail = await core.commitDetail({ cwd: rewindRepo, hash: middle });
+  check('reads the commit', detail.ok === true && detail.shortHash === middle, detail);
+  check('splits subject and body', detail.subject === 'feat: two' && detail.body === '', { subject: detail.subject, body: detail.body });
+  check('lists the files it touched', detail.files.length === 1 && detail.files[0].path === 'two.txt', detail.files);
+  check('counts the lines it added', detail.files[0].additions === 1, detail.files);
+  check('names the author and parent', detail.author === 'Rewind User' && detail.parents.length === 1, detail);
+
+  writeFileSync(join(rewindRepo, 'one.txt'), 'one\nmore\n');
+  await core.commit({ cwd: rewindRepo, all: true, message: 'feat: with a body\n\nWhy it changed, in a paragraph.' });
+  const withBody = await core.commitDetail({ cwd: rewindRepo });
+  check('keeps a multi-paragraph body', withBody.subject === 'feat: with a body' && withBody.body === 'Why it changed, in a paragraph.', withBody);
+  check('defaults to HEAD', withBody.ok === true && withBody.hash.length === 40, withBody.hash);
+
   section('gitignore planning');
   const ignoreRepo = join(sandbox, 'ignore-repo');
   await core.init({ cwd: ignoreRepo });

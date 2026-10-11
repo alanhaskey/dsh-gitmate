@@ -937,6 +937,57 @@ export function createGitCore({ exec, config = {} }) {
   }
 
   /**
+   * Read one commit: its whole message and the files it touched.
+   * @param args - `cwd` and the commit `hash` (defaults to HEAD).
+   */
+  async function commitDetail({ cwd, signal, hash } = {}) {
+    const found = await probe({ cwd, signal });
+    if (!found.isRepo) {
+      return { ok: false, isRepo: false, cwd: found.cwd, error: `not a git repository: ${found.reason}` };
+    }
+    const root = found.root;
+    const revision = String(hash ?? '').trim() || 'HEAD';
+    const meta = await run(
+      ['show', '-s', '--no-color', '--no-patch', '--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%P%x1f%B', revision],
+      { cwd: root, signal },
+    );
+    if (!meta.ok) return { ok: false, isRepo: true, root, error: describeFailure(meta, 'git show failed') };
+    const [fullHash, shortHash, author, date, parents, ...rest] = meta.stdout.split('\u001f');
+    const message = rest.join('\u001f').replace(/\s+$/, '');
+    const lines = message.split('\n');
+    const stat = await run(['show', '--numstat', '--format=', '-1', revision], { cwd: root, signal });
+    const files = stat.ok
+      ? stat.stdout
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const [added, deleted, ...tail] = line.split('\t');
+            return {
+              path: tail.join('\t'),
+              additions: added === '-' ? null : Number(added),
+              deletions: deleted === '-' ? null : Number(deleted),
+            };
+          })
+          .filter((file) => file.path !== '')
+      : [];
+    return {
+      ok: true,
+      isRepo: true,
+      root,
+      hash: fullHash,
+      shortHash,
+      author,
+      date,
+      parents: parents === '' ? [] : parents.split(' '),
+      subject: lines[0] ?? '',
+      body: lines.slice(1).join('\n').trim(),
+      message,
+      files,
+    };
+  }
+
+  /**
    * Read recent commits together with everything a graph view needs.
    *
    * Separate from `log` on purpose: the agent tool wants subjects, while the
@@ -1460,16 +1511,17 @@ export function createGitCore({ exec, config = {} }) {
   }
 
   /**
-   * Undo the most recent commit.
+   * Move the branch back to a commit.
    *
-   * `soft` keeps its changes staged, `mixed` keeps them in the working tree
-   * unstaged, and `hard` throws them away. Undoing a commit that is already on
-   * the upstream rewrites published history, so the result says so and callers
-   * are expected to confirm before choosing that.
+   * With no `target` this undoes the most recent commit; with one it rewinds to
+   * that revision. `soft` keeps the discarded changes staged, `mixed` keeps them
+   * in the working tree unstaged, and `hard` throws them away. Rewinding past a
+   * commit that is already on the upstream rewrites published history, so the
+   * result says so and callers are expected to confirm before choosing that.
    *
-   * @param args - `cwd` and `mode` (`soft` | `mixed` | `hard`).
+   * @param args - `cwd`, `mode` (`soft` | `mixed` | `hard`), and optional `target`.
    */
-  async function resetLastCommit({ cwd, signal, mode = 'mixed' } = {}) {
+  async function resetLastCommit({ cwd, signal, mode = 'mixed', target } = {}) {
     const found = await probe({ cwd, signal });
     if (!found.isRepo) {
       return { ok: false, isRepo: false, cwd: found.cwd, error: `not a git repository: ${found.reason}` };
@@ -1482,9 +1534,19 @@ export function createGitCore({ exec, config = {} }) {
       return { ok: false, isRepo: true, root, error: 'the repository has no commit to undo' };
     }
 
+    // Which revision to rewind to, and how much that discards — both reported,
+    // so a caller can say exactly what it is about to do.
+    const requested = String(target ?? '').trim();
+    const revision = requested === '' ? 'HEAD~1' : requested;
+    if (requested !== '') {
+      const reachable = await run(['rev-parse', '--verify', '--quiet', `${requested}^{commit}`], { cwd: root, signal });
+      if (!reachable.ok) return { ok: false, isRepo: true, root, error: `no commit matches ${requested}` };
+    }
+
     const described = await run(['log', '-1', '--pretty=format:%h%x1f%s'], { cwd: root, signal });
     const [hash, ...rest] = described.stdout.split('\u001f');
     const undone = { hash, subject: rest.join('\u001f') };
+    const dropped = await run(['rev-list', '--count', `${revision}..HEAD`], { cwd: root, signal });
 
     // Is this commit already published? Counting commits the upstream lacks
     // answers it without needing the remote to be reachable.
@@ -1495,8 +1557,8 @@ export function createGitCore({ exec, config = {} }) {
       published = ahead.ok && Number(ahead.stdout.trim()) === 0;
     }
 
-    const parent = await run(['rev-parse', '--verify', '--quiet', 'HEAD~1'], { cwd: root, signal });
-    if (!parent.ok) {
+    const parent = await run(['rev-parse', '--verify', '--quiet', revision], { cwd: root, signal });
+    if (!parent.ok && requested === '') {
       // The root commit has no parent to reset to. Dropping the branch ref is
       // the only faithful equivalent, and it can only preserve the work tree.
       if (chosen !== 'soft') {
@@ -1517,7 +1579,7 @@ export function createGitCore({ exec, config = {} }) {
     }
 
     const flag = chosen === 'soft' ? '--soft' : chosen === 'hard' ? '--hard' : '--mixed';
-    const result = await run(['reset', flag, 'HEAD~1'], { cwd: root, signal });
+    const result = await run(['reset', flag, revision], { cwd: root, signal });
     if (!result.ok) {
       return { ok: false, isRepo: true, root, error: describeFailure(result, 'git reset failed'), undone, published };
     }
@@ -1527,6 +1589,8 @@ export function createGitCore({ exec, config = {} }) {
       isRepo: true,
       root,
       mode: chosen,
+      target: revision,
+      dropped: dropped.ok ? Number(dropped.stdout.trim()) : null,
       undone,
       published,
       staged: state.staged?.length ?? 0,
@@ -1649,6 +1713,7 @@ export function createGitCore({ exec, config = {} }) {
     changeBundle,
     viewUntracked,
     history,
+    commitDetail,
     gitignoreGroups: GITIGNORE_GROUPS,
     resetLastCommit,
     gitignorePlan,

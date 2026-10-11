@@ -100,13 +100,18 @@ window.__ModuleLoader__.load({
         stChanged: '改动',
         noChanges: '没有改动',
         truncated: '补丁过长，已截断',
-        moreContext: '展开更多上下文',
-        lessContext: '收起到默认上下文',
         emptyPatch: '这个文件没有可显示的差异。',
         resizeHint: '拖动调整输入框高度，双击恢复默认',
         history: '历史提交',
         noCommits: '还没有任何提交',
         noCommitsHint: '第一次提交之后，这里会画出提交图。',
+        undoThisCommit: '撤销这次提交',
+        rewindHere: '回滚到这个提交',
+        rewindHint: '分支指针会移回这个提交，被丢弃的改动怎么处理：',
+        rewindDone: '已回滚到 {hash}',
+        dropped: '丢弃 {n} 个提交',
+        noFiles: '这个提交没有文件变更（可能是空提交）。',
+        cancel: '取消',
         nothingStaged: '还没有暂存任何改动。',
         explain: '解释改动',
         explaining: '正在总结…',
@@ -225,13 +230,18 @@ window.__ModuleLoader__.load({
         stChanged: 'Changed',
         noChanges: 'No changes',
         truncated: 'Patch truncated',
-        moreContext: 'Show more context',
-        lessContext: 'Collapse to default context',
         emptyPatch: 'This file has no diff to show.',
         resizeHint: 'Drag to resize the message box, double-click to reset',
         history: 'Commit history',
         noCommits: 'No commits yet',
         noCommitsHint: 'The graph appears here after the first commit.',
+        undoThisCommit: 'Undo this commit',
+        rewindHere: 'Rewind to this commit',
+        rewindHint: 'The branch pointer moves back to this commit. Its changes are:',
+        rewindDone: 'Rewound to {hash}',
+        dropped: '{n} commit(s) dropped',
+        noFiles: 'This commit changed no files (it may be empty).',
+        cancel: 'Cancel',
         nothingStaged: 'Nothing is staged yet.',
         explain: 'Explain change',
         explaining: 'Summarizing…',
@@ -480,13 +490,6 @@ window.__ModuleLoader__.load({
 /* Barely larger than a secondary control: enough to read as primary, not
    enough to shout. */
 .dsg-btn-commit { min-height:28px; font-size:12px; padding:0 12px; border-radius:8px; }
-.dsg-sync { display:flex; align-items:center; gap:8px; }
-.dsg-sync .dsg-seg { flex:1 1 auto; }
-.dsg-seg { display:flex; }
-.dsg-btn-seg { border-radius:0; margin-left:-1px; flex:1 1 auto; }
-.dsg-btn-seg:first-child { border-radius:7px 0 0 7px; margin-left:0; }
-.dsg-btn-seg:last-child { border-radius:0 7px 7px 0; }
-.dsg-btn-seg:hover:not(:disabled) { position:relative; z-index:1; }
 .dsg-btn:hover:not(:disabled) { border-color:var(--dsw-alias-border-l2); }
 .dsg-btn:disabled { opacity:.45; cursor:default; }
 .dsg-btn-primary { background:var(--dsw-alias-brand-primary); border-color:var(--dsw-alias-brand-primary); color:var(--dsw-alias-bg-base); font-weight:600; }
@@ -572,6 +575,16 @@ window.__ModuleLoader__.load({
 .dsg-hsubject { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; }
 .dsg-ref { flex:0 0 auto; max-width:10em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:1px solid var(--dsw-alias-brand-primary); color:var(--dsw-alias-brand-primary); border-radius:5px; padding:0 5px; font-size:9.5px; line-height:1.7; }
 .dsg-hmeta { display:flex; align-items:center; gap:8px; color:var(--dsw-alias-label-secondary); font-size:10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.dsg-hrow-open { background:var(--dsw-alias-bg-layer-1); }
+.dsg-hhead { display:flex; flex-direction:column; gap:3px; width:100%; min-width:0; appearance:none; background:none; border:none; padding:0; margin:0; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.dsg-hbody { display:flex; flex-direction:column; gap:7px; padding:8px 0 2px; }
+.dsg-hmessage { margin:0; padding:7px 8px; border:1px solid var(--dsw-alias-border-l1); border-radius:8px; background:var(--dsw-alias-bg-base); font-family:inherit; font-size:11px; line-height:1.65; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--dsw-alias-label-primary); }
+.dsg-hfiles { display:flex; flex-direction:column; gap:3px; }
+.dsg-hfile { display:flex; align-items:center; gap:6px; font-size:10.5px; }
+.dsg-hfile-path { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--dsw-alias-label-secondary); }
+/* Destructive work states its consequence in the warning colour before it offers
+   the buttons, and the hardest mode confirms separately. */
+.dsg-danger { display:flex; flex-direction:column; gap:7px; margin-top:8px; padding:8px; border:1px solid var(--dsw-alias-state-warn-primary); border-radius:8px; background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary); font-size:11px; }
 .dsg-commit { flex:0 0 auto; border-top:1px solid var(--dsw-alias-border-l1); padding:10px; display:flex; flex-direction:column; gap:8px; background:var(--dsw-alias-bg-base); }
 .dsg-card { display:flex; flex-direction:column; gap:8px; padding:9px; border:1px solid var(--dsw-alias-border-l1); border-radius:10px; background:var(--dsw-alias-bg-layer-1); }
 .dsg-actions { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
@@ -747,7 +760,7 @@ window.__ModuleLoader__.load({
      * over a status token, with a plain surface colour declared first as the
      * fallback — neither is a literal colour.
      */
-    function DiffBody({ rows }) {
+    function DiffBody({ rows, t }) {
       if (!Array.isArray(rows) || rows.length === 0) return h('div', { className: 'dsg-empty' }, t('emptyPatch'));
       return h(
         'div',
@@ -878,7 +891,9 @@ window.__ModuleLoader__.load({
         const [draft, setDraft] = useState(null);
         const [ignorePlan, setIgnorePlan] = useState(null);
         const [history, setHistory] = useState(null);
-        const [wideContext, setWideContext] = useState(false);
+        const [openCommit, setOpenCommit] = useState(null);
+        const [commits, setCommits] = useState({});
+        const [rewind, setRewind] = useState(null);
         /** Pixels given to the message box; null means its stylesheet default. */
         const [messageHeight, setMessageHeight] = useState(null);
         const [ignoreChoice, setIgnoreChoice] = useState(null);
@@ -967,16 +982,11 @@ window.__ModuleLoader__.load({
         );
 
         const openDiff = useCallback(
-          async (scope, path, context) => {
+          async (scope, path) => {
             setOpen({ scope, path });
             setPatch(null);
             setSummary(null);
-            const answer = await request('diff', {
-              scope,
-              paths: [path],
-              maxBytes: DIFF_CHAR_CAP,
-              ...(context ? { contextLines: context } : {}),
-            });
+            const answer = await request('diff', { scope, paths: [path], maxBytes: DIFF_CHAR_CAP });
             if (!mounted.current) return;
             if (answer.error) {
               setError(answer.error);
@@ -998,9 +1008,9 @@ window.__ModuleLoader__.load({
               setSummary(null);
               return;
             }
-            void openDiff(scope, path, wideContext ? 24 : undefined);
+            void openDiff(scope, path);
           },
-          [open, openDiff, wideContext],
+          [open, openDiff],
         );
 
         /** Ask the model what this file's change does, instead of reading it all. */
@@ -1182,6 +1192,67 @@ window.__ModuleLoader__.load({
           setError('');
           setHistory(answer.value);
         }, [request]);
+
+
+
+        /** Open one commit: its whole message and the files it touched. */
+        const toggleCommit = useCallback(
+          async (commit) => {
+            if (openCommit === commit.hash) {
+              setOpenCommit(null);
+              return;
+            }
+            setOpenCommit(commit.hash);
+            if (commits[commit.hash] !== undefined) return;
+            const answer = await request('commitDetail', { hash: commit.hash });
+            if (!mounted.current) return;
+            if (answer.error) {
+              setError(answer.error);
+              return;
+            }
+            if (answer.value?.ok !== true) {
+              setError(answer.value?.error ?? 'could not read this commit');
+              return;
+            }
+            setCommits((current) => ({ ...current, [commit.hash]: answer.value }));
+          },
+          [openCommit, commits, request],
+        );
+
+        /**
+         * Rewind the branch to a commit.
+         *
+         * Destructive by nature, so it is two steps: pick the mode, then confirm
+         * — and the confirm names the commit and how much it discards.
+         */
+        const rewindTo = useCallback(
+          async (commit, mode) => {
+            setBusy('rewind');
+            setError('');
+            const answer = await request('reset', { mode, target: commit.hash });
+            if (!mounted.current) return;
+            setBusy('');
+            if (answer.error) {
+              setError(answer.error);
+              return;
+            }
+            if (answer.value?.ok !== true) {
+              setError(answer.value?.error ?? 'the rewind failed');
+              return;
+            }
+            setRewind(null);
+            setOpenCommit(null);
+            setCommits({});
+            setNotice(
+              `${t('rewindDone').replace('{hash}', commit.shortHash)}${answer.value.dropped ? ` (${t('dropped').replace('{n}', String(answer.value.dropped))})` : ''}${
+                answer.value.published ? ` — ${t('rollbackPublished')}` : ''
+              }`,
+            );
+            await loadHistory();
+            await refresh(true);
+          },
+          [loadHistory, refresh, request, t],
+        );
 
         /** Read the plugin settings and the `.gitignore` plan together. */
         const loadSettings = useCallback(async () => {
@@ -1390,6 +1461,42 @@ window.__ModuleLoader__.load({
                   ? h('span', { className: 'dsg-badge dsg-badge-behind' }, t('behind').replace('{n}', String(status.behind)))
                   : null,
                 status.clean ? h('span', { className: 'dsg-hint' }, t('clean')) : null,
+                h('span', { className: 'dsg-spacer' }),
+                // Remote work belongs beside the divergence it acts on, not at
+                // the bottom of the commit form.
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsg-btn dsg-btn-icon dsg-btn-quiet',
+                    disabled,
+                    title: t('push'),
+                    onClick: () => void act('push', 'sync', { action: 'push' }, () => t('pushDone')),
+                  },
+                  h(IconPush, { size: 13 }),
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsg-btn dsg-btn-icon dsg-btn-quiet',
+                    disabled,
+                    title: t('pull'),
+                    onClick: () => void act('pull', 'sync', { action: 'pull' }, () => t('pullDone')),
+                  },
+                  h(IconPull, { size: 13 }),
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsg-btn dsg-btn-icon dsg-btn-quiet',
+                    disabled,
+                    title: t('fetch'),
+                    onClick: () => void act('fetch', 'sync', { action: 'fetch' }, () => t('fetchDone')),
+                  },
+                  h(IconFetch, { size: 13 }),
+                ),
               )
             : null,
         );
@@ -1567,21 +1674,6 @@ window.__ModuleLoader__.load({
               patch?.truncated ? h('span', { className: 'dsg-hint' }, t('truncated')) : null,
               h(
                 'button',
-                {
-                  type: 'button',
-                  className: 'dsg-btn dsg-btn-icon dsg-btn-quiet',
-                  disabled,
-                  title: wideContext ? t('lessContext') : t('moreContext'),
-                  onClick: () => {
-                    const next = !wideContext;
-                    setWideContext(next);
-                    void openDiff(open.scope, entry.path, next ? 24 : 3);
-                  },
-                },
-                wideContext ? h(IconMinus, { size: 14 }) : h(IconPlus, { size: 14 }),
-              ),
-              h(
-                'button',
                 { type: 'button', className: 'dsg-btn', disabled, onClick: () => void explain() },
                 h(IconBubble, { size: 13 }),
                 busy === 'explain' ? t('explaining') : t('explain'),
@@ -1595,7 +1687,7 @@ window.__ModuleLoader__.load({
                   h('pre', { className: 'dsg-summary' }, summary.text),
                 )
               : null,
-            patch === null ? h('div', { className: 'dsg-empty' }, t('working')) : h(DiffBody, { rows: patch.rows }),
+            patch === null ? h('div', { className: 'dsg-empty' }, t('working')) : h(DiffBody, { rows: patch.rows, t }),
           );
 
         const changes = h(
@@ -1654,59 +1746,6 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
-        );
-
-        const rollbackRow = h(
-          'div',
-          null,
-          rollbackOpen
-            ? h(
-                Fragment,
-                null,
-                h('div', { className: 'dsg-dim' }, t('rollbackHint')),
-                h(
-                  'div',
-                  { className: 'dsg-actions' },
-                  h(
-                    'button',
-                    { type: 'button', className: 'dsg-btn', disabled, onClick: () => void rollback('soft') },
-                    t('rollbackSoft'),
-                  ),
-                  h(
-                    'button',
-                    { type: 'button', className: 'dsg-btn', disabled, onClick: () => void rollback('mixed') },
-                    t('rollbackMixed'),
-                  ),
-                  h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: `dsg-btn dsg-btn-danger${confirming === 'rollback:hard' ? ' dsg-btn-armed' : ''}`,
-                      disabled,
-                      onClick: () => {
-                        if (confirming !== 'rollback:hard') {
-                          setConfirming('rollback:hard');
-                          return;
-                        }
-                        setConfirming('');
-                        void rollback('hard');
-                      },
-                    },
-                    confirming === 'rollback:hard' ? t('rollbackConfirm') : t('rollbackHard'),
-                  ),
-                  h(
-                    'button',
-                    { type: 'button', className: 'dsg-btn dsg-btn-quiet', onClick: () => setRollbackOpen(false) },
-                    t('back'),
-                  ),
-                ),
-                h('div', { className: 'dsg-dim' }, t('rollbackWarning')),
-              )
-            : h(
-                'button',
-                { type: 'button', className: 'dsg-btn dsg-btn-quiet', disabled, onClick: () => setRollbackOpen(true) },
-                t('rollback'),
-              ),
         );
 
         const commitBox = h(
@@ -1771,52 +1810,7 @@ window.__ModuleLoader__.load({
               h('span', { className: 'dsg-spacer' }),
               stagedCount === 0 ? h('span', { className: 'dsg-hint' }, t('nothingStaged')) : null,
             ),
-            h('div', { className: 'dsg-divider' }),
-            // Remote work is its own labelled group, not a third row of buttons.
-            h(
-              'div',
-              { className: 'dsg-sync' },
-              h('span', { className: 'dsg-label' }, t('remote')),
-              h(
-                'div',
-                { className: 'dsg-seg' },
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsg-btn dsg-btn-seg',
-                    disabled,
-                    onClick: () => void act('push', 'sync', { action: 'push' }, () => t('pushDone')),
-                  },
-                  h(IconPush, { size: 13 }),
-                  t('push'),
-                ),
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsg-btn dsg-btn-seg',
-                    disabled,
-                    onClick: () => void act('pull', 'sync', { action: 'pull' }, () => t('pullDone')),
-                  },
-                  h(IconPull, { size: 13 }),
-                  t('pull'),
-                ),
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dsg-btn dsg-btn-seg',
-                    disabled,
-                    onClick: () => void act('fetch', 'sync', { action: 'fetch' }, () => t('fetchDone')),
-                  },
-                  h(IconFetch, { size: 13 }),
-                  t('fetch'),
-                ),
-              ),
-            ),
           ),
-          rollbackRow,
         );
 
         /**
@@ -1857,7 +1851,7 @@ window.__ModuleLoader__.load({
           },
         });
 
-        /** The history view: the commit graph plus what each commit says. */
+        /** The history view: the commit graph, and one commit at a time in full. */
         const historyView =
           history === null
             ? h('div', { className: 'dsg-empty' }, t('working'))
@@ -1872,10 +1866,13 @@ window.__ModuleLoader__.load({
               : h(
                   'div',
                   { className: 'dsg-scroll' },
-                  history.commits.map((commit, index) =>
-                    h(
+                  history.commits.map((commit, index) => {
+                    const open = openCommit === commit.hash;
+                    const detail = commits[commit.hash];
+                    const newest = index === 0 && commit.hash === history.head;
+                    return h(
                       'div',
-                      { className: 'dsg-hrow', key: commit.hash },
+                      { className: `dsg-hrow${open ? ' dsg-hrow-open' : ''}`, key: commit.hash },
                       h(GraphCell, {
                         row: history.graph.rows[index] ?? { lane: 0, before: [], after: [], parentLanes: [] },
                         laneCount: history.graph.laneCount,
@@ -1885,23 +1882,131 @@ window.__ModuleLoader__.load({
                         'div',
                         { className: 'dsg-hmain' },
                         h(
-                          'div',
-                          { className: 'dsg-hline' },
-                          commit.refs.map((ref) =>
-                            h('span', { className: 'dsg-ref', key: ref, title: ref }, ref),
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'dsg-hhead',
+                            'aria-expanded': open,
+                            onClick: () => void toggleCommit(commit),
+                          },
+                          h(
+                            'span',
+                            { className: 'dsg-hline' },
+                            commit.refs.map((ref) => h('span', { className: 'dsg-ref', key: ref, title: ref }, ref)),
+                            h('span', { className: 'dsg-hsubject' }, commit.subject),
                           ),
-                          h('span', { className: 'dsg-hsubject' }, commit.subject),
+                          h(
+                            'span',
+                            { className: 'dsg-hmeta' },
+                            h('span', null, commit.shortHash),
+                            h('span', null, commit.author),
+                            h('span', null, String(commit.date ?? '').slice(0, 10)),
+                          ),
                         ),
-                        h(
-                          'div',
-                          { className: 'dsg-hmeta' },
-                          h('span', null, commit.shortHash),
-                          h('span', null, commit.author),
-                          h('span', null, String(commit.date ?? '').slice(0, 10)),
-                        ),
+                        open
+                          ? h(
+                              'div',
+                              { className: 'dsg-hbody' },
+                              detail === undefined
+                                ? h('div', { className: 'dsg-hint' }, t('working'))
+                                : h(
+                                    Fragment,
+                                    null,
+                                    detail.body === ''
+                                      ? null
+                                      : h('pre', { className: 'dsg-hmessage' }, detail.body),
+                                    h(
+                                      'div',
+                                      { className: 'dsg-hfiles' },
+                                      detail.files.length === 0
+                                        ? h('div', { className: 'dsg-hint' }, t('noFiles'))
+                                        : detail.files.map((file) =>
+                                            h(
+                                              'div',
+                                              { className: 'dsg-hfile', key: file.path },
+                                              h('span', { className: 'dsg-hfile-path', title: file.path }, file.path),
+                                              h(LineCounts, { lines: file }),
+                                            ),
+                                          ),
+                                    ),
+                                  ),
+                            )
+                          : null,
+                        open
+                          ? rewind !== null && rewind.hash === commit.hash
+                            ? h(
+                                'div',
+                                { className: 'dsg-danger' },
+                                h('div', null, t('rewindHint')),
+                                h(
+                                  'div',
+                                  { className: 'dsg-actions' },
+                                  h(
+                                    'button',
+                                    {
+                                      type: 'button',
+                                      className: 'dsg-btn',
+                                      disabled,
+                                      onClick: () => void rewindTo(commit, 'soft'),
+                                    },
+                                    t('rollbackSoft'),
+                                  ),
+                                  h(
+                                    'button',
+                                    {
+                                      type: 'button',
+                                      className: 'dsg-btn',
+                                      disabled,
+                                      onClick: () => void rewindTo(commit, 'mixed'),
+                                    },
+                                    t('rollbackMixed'),
+                                  ),
+                                  h(
+                                    'button',
+                                    {
+                                      type: 'button',
+                                      className: `dsg-btn dsg-btn-danger${
+                                        rewind.mode === 'hard' ? ' dsg-btn-armed' : ''
+                                      }`,
+                                      disabled,
+                                      onClick: () =>
+                                        rewind.mode === 'hard'
+                                          ? void rewindTo(commit, 'hard')
+                                          : setRewind({ hash: commit.hash, mode: 'hard' }),
+                                    },
+                                    rewind.mode === 'hard' ? t('rollbackConfirm') : t('rollbackHard'),
+                                  ),
+                                  h(
+                                    'button',
+                                    {
+                                      type: 'button',
+                                      className: 'dsg-btn dsg-btn-quiet',
+                                      onClick: () => setRewind(null),
+                                    },
+                                    t('cancel'),
+                                  ),
+                                ),
+                                h('div', { className: 'dsg-hint' }, t('rollbackWarning')),
+                              )
+                            : h(
+                                'div',
+                                { className: 'dsg-actions' },
+                                h(
+                                  'button',
+                                  {
+                                    type: 'button',
+                                    className: 'dsg-btn dsg-btn-danger',
+                                    disabled,
+                                    onClick: () => setRewind({ hash: commit.hash, mode: null }),
+                                  },
+                                  h(IconUndo, { size: 13 }),
+                                  newest ? t('undoThisCommit') : t('rewindHere'),
+                                ),
+                              )
+                          : null,
                       ),
-                    ),
-                  ),
+                    );
+                  }),
                 );
 
         /** One labelled settings row. */

@@ -65,6 +65,7 @@ const ENDPOINTS = new Set([
   'reset',
   'gitignore',
   'history',
+  'commitDetail',
 ]);
 
 /** One failure in the envelope shape the Harness RPC transport uses. */
@@ -202,7 +203,20 @@ export function createPanelDispatcher(operations) {
         }
         return success(readSettings());
       case 'reset':
-        return success(await core.resetLastCommit({ ...bound, mode: text(payload, 'mode') || 'mixed' }));
+        return success(
+          await core.resetLastCommit({
+            ...bound,
+            mode: text(payload, 'mode') || 'mixed',
+            ...(text(payload, 'target') ? { target: text(payload, 'target') } : {}),
+          }),
+        );
+      case 'commitDetail':
+        return success(
+          await core.commitDetail({
+            ...bound,
+            ...(text(payload, 'hash') ? { hash: text(payload, 'hash') } : {}),
+          }),
+        );
       case 'gitignore': {
         if (text(payload, 'action') === 'write') {
           const chosen = list(payload, 'groups');
