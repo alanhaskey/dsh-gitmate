@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "GitMate（dsh-git）",
+    "description": "右侧栏的智能 Git 面板：改动与差异、自动生成提交说明、一键提交与推送、分支切换、提交图与回滚、一键生成 .gitignore。同一套能力也注册为 10 个 Agent 工具。"
+  }
+}

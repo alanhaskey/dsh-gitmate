@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "GitMate (dsh-git)",
+    "description": "A smart Git panel in the right sidebar: changes and diffs, generated commit messages, one-click commit and push, branch switching, a commit graph with rewind, and one-click .gitignore generation. The same operations are registered as ten agent tools."
+  }
+}

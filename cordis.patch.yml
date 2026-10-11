@@ -1,14 +1,5 @@
-# Bundle patch layer: one Host row, loaded from this package's entry point.
-#
-# The row names the entry module by PATH rather than by package specifier.
-# `@deepseek-ai/dsh-client-modules` caches its "is this a client package?"
-# verdict per loader specifier *until the process restarts*, so a package that
-# later gains a `dsh.client` declaration keeps the stale negative answer under
-# its package name and its browser half never loads. Because the two halves ship
-# together, the row is addressed by path (anchored beside this file, as inserted
-# relative rows are) so the scan always reads the manifest afresh — the same
-# technique used by any dual-face bundle whose client half must appear without
-# an app restart.
+# Bundle patch layer: one Host row, loaded from this package's entry point,
+# plus this bundle's tunables.
 #
 # Tunables live here so they survive upgrades of the package itself. Remove a
 # key to fall back to the built-in default; the values below are the defaults.
@@ -19,7 +10,7 @@
 # configuration reload. `lib/plugin.js` handles code reload instead.
 - insert:
     - id: dsh-git
-      name: './lib/plugin.js'
+      name: 'dsh-gitmate'
       config:
         # Branch created by git_init when the caller names none.
         defaultBranch: main

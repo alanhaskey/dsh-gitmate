@@ -1,4 +1,15 @@
-# dsh-git — 给 DSH 的 Git 面板与 Git 工具
+# GitMate — DSH 的智能 Git 面板
+
+> 一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件：右侧栏的 Git 面板 + 十个 Agent 工具。
+> 包名 `dsh-gitmate`，分类 `git`。[MIT](LICENSE)。
+
+```sh
+dsh plugin --profile web add github:alanhaskey/dsh-gitmate
+```
+
+装好后重启一次 DSH、刷新页面，右侧栏「+」里就会出现 **GitMate**。
+
+> 内部标识（Loader 行 id `dsh-git`、标签页 key）和包名不同名是有意的：行 id 是你已有配置行的键，改它会让已保存的设置失配。
 
 在 DeepSeek Harness 的**右侧栏**里直接操作 Git：看改动、看差异、暂存/取消暂存、丢弃、**一键生成提交说明**、提交、推送/拉取/获取、初始化仓库、写本机配置、切分支、回滚提交、一键生成 `.gitignore`。点开一个文件可以看补丁，也可以让模型用几句话**总结这个文件改了什么**，不必逐行读。同一套能力也注册成 Agent 工具，所以在对话里说一句也能做。
 
@@ -6,7 +17,7 @@
 
 ## 面板
 
-右侧栏 →「+」→ 选 **Git** 打开（和 Files、Terminal 同一排）。
+右侧栏 →「+」→ 选 **GitMate** 打开（和 Files、Terminal 同一排）。
 
 **改动视图**
 

@@ -1,6 +1,0 @@
-{
-  "meta": {
-    "title": "Git (dsh-git)",
-    "description": "Git control tools for the agent: repository status, diffs, staging, commits with model-generated messages, init, config, remotes, and branches."
-  }
-}

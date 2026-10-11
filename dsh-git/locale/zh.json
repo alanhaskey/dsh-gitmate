@@ -1,6 +1,0 @@
-{
-  "meta": {
-    "title": "Git（dsh-git）",
-    "description": "面向 Agent 的 Git 控制工具：仓库状态、差异、暂存、自动生成提交说明的 commit、仓库初始化、本机配置、远程同步与分支管理。"
-  }
-}

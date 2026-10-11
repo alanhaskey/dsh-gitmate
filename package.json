@@ -1,0 +1,62 @@
+{
+  "name": "dsh-gitmate",
+  "version": "1.1.0",
+  "description": "GitMate — a smart Git panel for DeepSeek Harness plus ten agent tools: diffs, generated commit messages, a commit graph with rewind, and .gitignore generation. · DSH 右侧栏的智能 Git 面板。",
+  "license": "MIT",
+  "author": "alanhaskey",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "git",
+    "commit-message",
+    "code-review",
+    "agent-tools"
+  ],
+  "homepage": "https://github.com/alanhaskey/dsh-gitmate#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alanhaskey/dsh-gitmate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alanhaskey/dsh-gitmate/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "icon": "./icon.svg",
+  "main": "./lib/plugin.js",
+  "exports": {
+    ".": "./lib/plugin.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "lib",
+    "locale",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  }
+}
