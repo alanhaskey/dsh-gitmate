@@ -821,6 +821,13 @@ try {
     lastShellRequest.env?.GIT_TERMINAL_PROMPT === '0' && lastShellRequest.env?.GIT_PAGER === 'cat',
     lastShellRequest.env,
   );
+  // A localized git both defeats the English phrase table in text.js and, on
+  // Windows, comes back in the console code page as mojibake.
+  check(
+    'git is pinned to a single language',
+    lastShellRequest.env?.LC_ALL === 'C' && lastShellRequest.env?.LANG === 'C',
+    lastShellRequest.env,
+  );
   check('the pager is disabled by a flag, not an assignment', lastShellRequest.command.includes('--no-pager'), lastShellRequest.command);
 
   // PowerShell doubles a quote; a POSIX shell closes, escapes and reopens.
