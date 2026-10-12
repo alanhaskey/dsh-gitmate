@@ -1141,6 +1141,18 @@ try {
     readFileSync(join(cloneRepo, 'conflict.txt'), 'utf8'),
   );
 
+  // A push from a stale view of the remote is refused. git leads that output with
+  // "To <url>" and only then says why, so the destination used to be reported as
+  // the whole failure and the reason was never shown.
+  const rejectedPush = await core.sync({ cwd: cloneRepo, action: 'push' });
+  check('a rejected push fails', rejectedPush.ok === false, rejectedPush);
+  check(
+    'and the message names the reason, not the destination',
+    /rejected|fetch first|non-fast-forward/i.test(rejectedPush.error ?? ''),
+    rejectedPush.error,
+  );
+  check('without leading with the remote URL', !/^To\s+\S+\s*$/.test(rejectedPush.error ?? ''), rejectedPush.error);
+
   const fetchHere = await core.sync({ cwd: sandbox, action: 'fetch' });
   check('fetch on a directory that is not a repository reports it rather than throwing', fetchHere.ok === false && fetchHere.isRepo === false, fetchHere);
 
