@@ -481,16 +481,20 @@ try {
   await plugin.apply(fakeCtx, { defaultBranch: 'main' });
   const expectedNames = [
     'git_branch',
+    'git_cherry_pick',
     'git_commit',
     'git_config',
     'git_diff',
     'git_init',
     'git_log',
+    'git_rebase',
     'git_reset',
+    'git_revert',
     'git_stage',
     'git_stash',
     'git_status',
     'git_sync',
+    'git_tag',
   ];
   check('registers exactly the documented tools', registered.map((t) => t.name).sort().join(',') === expectedNames.join(','), registered.map((t) => t.name));
 
@@ -1067,6 +1071,109 @@ try {
   check('hard undo keeps the tree clean', hardUndo.ok === true && hardUndo.unstaged === 0 && hardUndo.staged === 0, hardUndo);
   check('hard undo discarded the edit', (await core.diff({ cwd: undoRepo, scope: 'unstaged' })).patch.trim() === '');
   check('the published flag is false without an upstream', hardUndo.published === false, hardUndo);
+
+  section('tags, revert, cherry-pick and rebase');
+  const opsRepo = join(sandbox, 'ops-repo');
+  await core.init({ cwd: opsRepo });
+  for (const [key, value] of [['user.name', 'Ops User'], ['user.email', 'ops@example.com']]) {
+    await core.config({ cwd: opsRepo, action: 'set', key, value });
+  }
+  writeFileSync(join(opsRepo, 'one.txt'), 'one\n');
+  await core.commit({ cwd: opsRepo, all: true, message: 'feat: one' });
+
+  // ---- tags ----
+  check('a repository starts with no tags', (await core.tag({ cwd: opsRepo, action: 'list' })).tags.length === 0);
+  const lightTag = await core.tag({ cwd: opsRepo, action: 'create', name: 'v0.1.0' });
+  check('creates a lightweight tag', lightTag.ok === true && lightTag.annotated === false, lightTag);
+  const annotated = await core.tag({ cwd: opsRepo, action: 'create', name: 'v0.2.0', message: 'release two' });
+  check('creates an annotated tag when given a message', annotated.ok === true && annotated.annotated === true, annotated);
+  check('rejects a name git would not accept', (await core.tag({ cwd: opsRepo, action: 'create', name: 'not a tag' })).ok === false);
+  check('refuses to reuse a name without force', (await core.tag({ cwd: opsRepo, action: 'create', name: 'v0.1.0' })).ok === false);
+  check('and replaces it with force', (await core.tag({ cwd: opsRepo, action: 'create', name: 'v0.1.0', force: true })).ok === true);
+  check('lists both tags', (await core.tag({ cwd: opsRepo, action: 'list' })).tags.length === 2);
+  check('deleting one works', (await core.tag({ cwd: opsRepo, action: 'delete', name: 'v0.1.0' })).ok === true);
+  check('leaving one', (await core.tag({ cwd: opsRepo, action: 'list' })).tags.length === 1);
+  check('pushing a tag needs a remote', (await core.tag({ cwd: opsRepo, action: 'push', name: 'v0.2.0' })).ok === false);
+  const tagged = await core.history({ cwd: opsRepo, limit: 5 });
+  // An annotated tag points at a tag object, so this only works if the ref is
+  // peeled to its commit.
+  check('an annotated tag shows on its commit', tagged.commits.some((c) => c.refs.includes('v0.2.0')), tagged.commits.map((c) => c.refs));
+
+  // ---- revert: undo by adding an inverse, leaving history intact ----
+  writeFileSync(join(opsRepo, 'two.txt'), 'two\n');
+  await core.commit({ cwd: opsRepo, all: true, message: 'feat: two' });
+  const twoCommit = (await core.log({ cwd: opsRepo, limit: 1 })).commits[0].hash;
+  const reverted = await core.revert({ cwd: opsRepo, revision: twoCommit });
+  check('revert adds a commit', reverted.ok === true && reverted.hash !== '', reverted);
+  check('and the file is gone again', !existsSync(join(opsRepo, 'two.txt')), reverted);
+  const afterRevert = await core.log({ cwd: opsRepo, limit: 4 });
+  check('the original commit is still in history', afterRevert.commits.some((c) => c.hash === twoCommit), afterRevert.commits.map((c) => c.hash));
+  check('refuses a revision that does not exist', (await core.revert({ cwd: opsRepo, revision: 'nope' })).ok === false);
+
+  // A revert that stops short of committing leaves a revert *in progress*: git
+  // then refuses to switch branches, so un-staging is not enough — the way out is
+  // the abort, which is also what the panel's button dispatches to.
+  const stagedRevert = await core.revert({ cwd: opsRepo, revision: 'HEAD~1', noCommit: true });
+  check('a revert can stop short of committing', stagedRevert.ok === true && stagedRevert.hash === '', stagedRevert);
+  const revertAborted = await core.revert({ cwd: opsRepo, abort: true });
+  check('and it can be aborted', revertAborted.ok === true && revertAborted.aborted === true, revertAborted);
+  check(
+    'leaving a clean tree and nothing in progress',
+    (await core.status({ cwd: opsRepo })).clean === true && (await core.status({ cwd: opsRepo })).operation === '',
+    await core.status({ cwd: opsRepo }),
+  );
+
+  // ---- cherry-pick: lift one commit onto another branch ----
+  const createdSource = await core.branch({ cwd: opsRepo, action: 'create', name: 'source' });
+  check('created a branch to lift a commit from', createdSource.ok === true, createdSource);
+  writeFileSync(join(opsRepo, 'gift.txt'), 'gift\n');
+  await core.commit({ cwd: opsRepo, all: true, message: 'feat: a gift' });
+  const gift = (await core.log({ cwd: opsRepo, limit: 1 })).commits[0].hash;
+  const backToMain = await core.branch({ cwd: opsRepo, action: 'switch', name: 'main' });
+  check('switched back to the branch without it', backToMain.ok === true, backToMain);
+  check('the gift is not here yet', !existsSync(join(opsRepo, 'gift.txt')));
+
+  // This branch moves on first, which is both the realistic case and the only one
+  // where the picked commit cannot coincide with the original: picking a direct
+  // child of HEAD, with the same author and committer inside the same second,
+  // reproduces the object byte for byte and therefore the same hash.
+  writeFileSync(join(opsRepo, 'main-only.txt'), 'main\n');
+  await core.commit({ cwd: opsRepo, all: true, message: 'feat: main only' });
+
+  const picked = await core.cherryPick({ cwd: opsRepo, revisions: [gift] });
+  check('cherry-pick brings the change over', picked.ok === true && existsSync(join(opsRepo, 'gift.txt')), picked);
+  const pickedHead = (await core.log({ cwd: opsRepo, limit: 1 })).commits[0];
+  check('as a new commit, not the same one', pickedHead.hash !== gift, { picked: pickedHead.hash, original: gift, subject: pickedHead.subject });
+  check('refuses an unknown revision', (await core.cherryPick({ cwd: opsRepo, revisions: ['nope'] })).ok === false);
+  check('and needs at least one revision', (await core.cherryPick({ cwd: opsRepo, revisions: [] })).ok === false);
+
+  // ---- rebase: replay onto another branch, and get out when it stops ----
+  const ontoSource = await core.branch({ cwd: opsRepo, action: 'switch', name: 'source' });
+  check('switched to the branch to rebase onto', ontoSource.ok === true, ontoSource);
+  writeFileSync(join(opsRepo, 'shared.txt'), 'from source\n');
+  await core.commit({ cwd: opsRepo, all: true, message: 'feat: source side' });
+  const rebasingBranch = await core.branch({ cwd: opsRepo, action: 'switch', name: 'main' });
+  check('and back to the branch to rebase', rebasingBranch.ok === true, rebasingBranch);
+  writeFileSync(join(opsRepo, 'shared.txt'), 'from main\n');
+  await core.commit({ cwd: opsRepo, all: true, message: 'feat: main side' });
+
+  check('rebase refuses an unknown target', (await core.rebase({ cwd: opsRepo, onto: 'nope' })).ok === false);
+  const rebased = await core.rebase({ cwd: opsRepo, onto: 'source' });
+  check('a rebase that conflicts reports it', rebased.ok === false && rebased.conflicted === true, rebased);
+  check('naming the file', rebased.conflicts?.includes('shared.txt'), rebased.conflicts);
+  check(
+    'the git directory says a rebase is in progress',
+    (await core.status({ cwd: opsRepo })).operation === 'rebase',
+    (await core.status({ cwd: opsRepo })).operation,
+  );
+  const rebaseAborted = await core.rebase({ cwd: opsRepo, abort: true });
+  check('and it can be aborted', rebaseAborted.ok === true && rebaseAborted.aborted === true, rebaseAborted);
+  check('leaving nothing in progress', (await core.status({ cwd: opsRepo })).operation === '', (await core.status({ cwd: opsRepo })).operation);
+  check(
+    'with the file back on this branch',
+    readFileSync(join(opsRepo, 'shared.txt'), 'utf8') === 'from main\n',
+    readFileSync(join(opsRepo, 'shared.txt'), 'utf8'),
+  );
 
   section('merge and stash');
   const workRepo = join(sandbox, 'merge-repo');
