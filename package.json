@@ -1,6 +1,6 @@
 {
   "name": "dsh-gitmate",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "GitMate — a smart Git panel for DeepSeek Harness plus fifteen agent tools: diffs, generated commit messages, a commit graph with rewind, and .gitignore generation. · DSH 右侧栏的智能 Git 面板。",
   "license": "MIT",
   "author": "alanhaskey",

@@ -1591,6 +1591,29 @@ try {
   check('keeps a multi-paragraph body', withBody.subject === 'feat: with a body' && withBody.body === 'Why it changed, in a paragraph.', withBody);
   check('defaults to HEAD', withBody.ok === true && withBody.hash.length === 40, withBody.hash);
 
+  section('one file inside one commit');
+  const firstCommit = (await core.log({ cwd: toolRepo, limit: 20 })).commits.at(-1);
+  const fileDiff = await core.diff({
+    cwd: toolRepo,
+    scope: 'commit',
+    revision: firstCommit.hash,
+    paths: ['app.js'],
+  });
+  check('a commit-scoped diff answers for one file', fileDiff.ok === true, fileDiff);
+  const fileRows = diffRows(fileDiff.patch ?? '').rows;
+  check(
+    'and parses into the rows the panel draws',
+    fileRows.some((row) => row.kind === 'add' && row.text.includes('console.log')),
+    fileRows.map((row) => [row.kind, row.text]),
+  );
+  check('the hunk is numbered from the file, not the repository', fileRows.some((row) => row.kind === 'hunk'), fileRows);
+  const untouched = await core.diff({ cwd: toolRepo, scope: 'commit', revision: firstCommit.hash, paths: ['nothing-here.txt'] });
+  check('a path the commit did not touch yields an empty patch', (untouched.patch ?? '') === '', untouched.patch);
+  check(
+    'an unknown revision is refused',
+    (await core.diff({ cwd: toolRepo, scope: 'commit', revision: 'no-such-commit' })).ok === false,
+  );
+
   section('a draft turns generation into completion');
   const sampleBundle = {
     branch: 'main',
