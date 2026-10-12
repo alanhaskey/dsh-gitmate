@@ -1080,8 +1080,26 @@ try {
   );
   check(
     'and the wait is visible rather than only disabling controls',
-    panelSource.includes("className: 'dsg-running'") && panelSource.includes('dsg-spin'),
+    panelSource.includes('dsg-toast-running') && panelSource.includes('dsg-spin'),
   );
+  // Both floating messages hang off the list area, so they land above the splitter
+  // and above the commit box rather than over it.
+  check(
+    'the running notice and the messages share one layer',
+    (panelSource.match(/className: 'dsg-toasts'/g) ?? []).length === 1 &&
+      panelSource.includes("'dsg-note dsg-toast dsg-toast-running'"),
+    (panelSource.match(/className: 'dsg-toasts'/g) ?? []).length,
+  );
+  check(
+    'and that layer is inside the list area, not the panel root',
+    /\n\s+toasts,\n\s+\),\n\s+tooltip === null/.test(panelSource),
+  );
+  check(
+    'the floating surface is opaque rather than a translucent wash',
+    !/\.dsg-toast \{[^}]*background:var\(--dsw-alias-bg-overlay\)/.test(panelSource) &&
+      !panelSource.includes('dsg-running'),
+  );
+
   check(
     'the model-backed controls carry an AI mark',
     (panelSource.match(/aiChip\(/g) ?? []).length >= 6,

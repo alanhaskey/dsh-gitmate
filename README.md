@@ -23,7 +23,7 @@ Restart DSH once, refresh the page, then open **GitMate** from the sidebar's **+
 - **One row of list actions**, shown only when they would do something, with the counts in the labels.
 - **Amend** — fold the staged changes into the previous commit; leaving the message box empty keeps the existing message.
 - **A draggable splitter** between the list and the commit card resizes the message box.
-- **A panel that is working says so** — every operation shows a turning indicator and names itself ("Committing…", "Reviewing the staged changes…") instead of only greying its buttons out.
+- **A panel that is working says so** — every operation shows a turning indicator and names itself ("Committing…", "Reviewing the staged changes…") instead of only greying its buttons out. It sits with the messages at the foot of the list, above the splitter, so it never covers the commit box.
 
 ## AI features
 
@@ -74,7 +74,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 ## Development
 
 ```sh
-node test/smoke.mjs     # 518 assertions; runs real git, no DSH required
+node test/smoke.mjs     # 521 assertions; runs real git, no DSH required
 ```
 
 ```
