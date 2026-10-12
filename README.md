@@ -1,220 +1,91 @@
-# GitMate — DSH 的智能 Git 面板
+# GitMate
 
-> 一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件：右侧栏的 Git 面板 + 十五个 Agent 工具。
-> 包名 `dsh-gitmate`，分类 `git`。[MIT](LICENSE)。
+**A Git panel in the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) sidebar — plus the same operations as fifteen agent tools.**
+
+English | [中文](README.zh.md)
+
+Review changes, read diffs, stage, commit with a generated message, merge, stash, sync, and rewind history without leaving the panel. Every operation is also a tool the agent can call, so asking in chat works too.
 
 ```sh
 dsh plugin --profile web add github:alanhaskey/dsh-gitmate
 ```
 
-装好后重启一次 DSH、刷新页面，右侧栏「+」里就会出现 **GitMate**。
+Restart DSH once, refresh the page, then open **GitMate** from the sidebar's **+** menu.
 
-> 内部标识（Loader 行 id `dsh-git`、标签页 key）和包名不同名是有意的：行 id 是你已有配置行的键，改它会让已保存的设置失配。
+> The internal ids (Loader row `dsh-git`, tab key) differ from the package name on purpose: the row id is the key of a config row you may already have, and renaming it would orphan your saved settings.
 
-在 DeepSeek Harness 的**右侧栏**里直接操作 Git：看改动、看差异、暂存/取消暂存、丢弃、**一键生成提交说明**、提交、推送/拉取/获取、**合并分支**、**贮藏改动**、初始化仓库、写本机配置、切分支、回滚提交、一键生成 `.gitignore`。点开一个文件可以看补丁，也可以让模型用几句话**总结这个文件改了什么**，不必逐行读。同一套能力也注册成 Agent 工具，所以在对话里说一句也能做。
+## Reviewing and committing
 
-以前这些要切回 VS Code、依赖那个时灵时不灵的提交信息插件；现在 dsh 自己就能做，提交说明由当前会话的模型按 Conventional Commits 生成，风格统一、可配置。
+- **Four groups** — conflicts, staged, changes, untracked. Each row shows the kind in words, the path, and that file's `+N −M`. Row actions stage, unstage, and discard, with a second click for anything destructive.
+- **Diffs like an editor** — two line-number gutters, `+`/`−` markers, tinted rows, and only the changed span of a replaced line marked. Click a file to expand it in place; click again to collapse. Widen the context from 3 lines to 24 when a hunk needs more of the file.
+- **One row of list actions**, shown only when they would do something, with the counts in the labels.
+- **Amend** — fold the staged changes into the previous commit; leaving the message box empty keeps the existing message.
+- **A draggable splitter** between the list and the commit card resizes the message box.
 
-## 面板
+## AI features
 
-右侧栏 →「+」→ 选 **GitMate** 打开（和 Files、Terminal 同一排）。
-
-**改动视图**
-
-- **分支栏**：点分支名展开本地分支列表——点名字切换、`×` 删除（需二次确认）、底部输入框直接**新建并切过去**；右侧显示上游与领先/落后。
-- **改动列表**：冲突 / 已暂存 / 改动 / 未跟踪 四组。列表级操作只有**一行**，而且按需出现：「全部暂存」只在有未暂存或未跟踪文件时出现，「全部取消暂存」只在暂存区非空时出现，按钮里带着各自的数量。以前这两个按钮挂在每个分组标题上——同一个列表里会出现两个「全部暂存」。每行是「**改动类型用文字**（修改 / 删除 / 新增 / 重命名 / 冲突）+ 文件路径 + **该文件增删行数 `+N −M`**」，右侧是 `+`（暂存）`−`（取消暂存）`⟲`（丢弃，需二次确认）。行数由 Host 侧的 `git diff --numstat` 统计，未跟踪文件按行数算，二进制文件不显示；这个统计是**按需开启**的（面板要，Agent 工具不要，省一次 git 调用）。
-- **点文件行展开差异**：点整行任意位置都行，**再点一次自动收拢**；路径本身是按钮，所以键盘也能展开/收起。补丁就地展开在那一行下面（不跳走），**按编辑器的方式渲染而不是 git 的原始格式**——左右两个行号栏、`+` / `−` 标记、整行淡色底（新增绿 / 删除红）、被替换的行只给**真正变化的那一段**加深底色、hunk 头单独一行显示函数上下文。窄栏里长行自动折行，不用横向拖。文件头显示 `+N −M`，旁边一个 `+` / `−` 按钮可以把上下文从 3 行展开到 24 行或收回。未跟踪文件没有补丁，面板直接把文件内容渲染成"全部新增"。
-- **「解释改动」**：在差异头部点一下，模型用 2–5 条要点说清这个文件改了什么、要注意什么——不想逐行读的时候就靠它。
-- **提交区**：说明输入框、**生成说明**、**提交**、`提交后推送`。生成按钮会看输入框：**空的写「生成说明」**，`git_commit` 不带 `message` 时由模型从暂存改动写一条；**你写了几句话就变成「补充优化」**——这时提示词也随之改变，模型拿到你的原文，任务是**保留你的意图和细节，把缺的补上、把措辞和格式改好**，而不是另写一条。远程操作（推送 / 拉取 / 获取）不在这里——它们挪到了顶部 hero 的状态行，紧挨着"领先/落后"徽标，因为那才是它们作用的对象。
-- **身份提示**：仓库没有 `user.name` / `user.email` 时提交按钮没有意义，面板会直接给出本仓库 / 全局两个范围的填写框。
-
-**历史视图**（顶部第三个按钮，图形图标）
-
-- 最近 40 个提交的**提交图**：泳道竖线、提交节点、合并/分叉处的曲线；`HEAD` 指向的节点填品牌色，一眼能找到自己在哪。
-- 每行显示分支徽标（`main`、`feature/x` 等指向该提交的 ref）、提交标题、短哈希、作者、日期。
-- **点任意一行展开这个提交**：**先是一排操作**（回滚 / 还原 / 遴选 / 变基、以及打标签的输入框），**下面才是提交信息正文和这次改动的文件**（各自带 `+N −M`）；再点一次收拢。**点文件可以看到它在这次提交里的差异**——和改动列表用的是同一个解析器和同一套渲染（双侧行号、整行底色、只标记真正变化的片段），所以两个视图读起来一致。操作在上、正文在下是有意的——先决定对这个提交做什么，再读它说了什么。
-- 展开后可以**回滚到这个提交**：先说明"分支指针会移回这里、被丢弃的改动怎么处理"，再给三个模式——保留改动（已暂存）/ 保留改动（取消暂存）/ 丢弃改动，最后一个还要再确认一次。回滚后提示丢弃了几个提交、以及是否动到了已推送的历史。
-- 取的是 `git log --all --topo-order`——**所有分支和远程跟踪分支都在图上**。只画当前分支的话那是一根线，不是树。
-- 泳道分配在 Host 侧完成（`buildGraph`），和补丁解析一样，这样能被离线测试覆盖。
-
-**设置视图**（右上角齿轮）
-
-原则是**能点的就别让人填**：语言、风格、默认分支名都是**按钮组**而不是下拉框或输入框——三个以内的互斥选项全部摊开，一次点击，不用先展开再选。**「生成用的模型」这一项已经移除**：生成说明和解释改动一律用当前会话的模型，少一个需要维护的配置。
-
-
-- 生成说明的**语言**（跟随仓库 / 英文 / 简体中文）、**风格**（Conventional Commits / 普通祈使句）、**自定义要求或模板**（例如「以模块名开头」，会追加在默认规则之后且优先级更高）。
-- 提交是否加 `Signed-off-by`、默认分支名、生成用的 provider/model（留空用会话默认）。
-- **`.gitignore` 由 AI 推断，不用你选**：只有两个按钮。「初始化 .gitignore」在还没有这个文件时，让模型读一遍项目的清单文件（`package.json`、`pyproject.toml`、`Cargo.toml`…）、顶层目录和一批路径样本，直接写出这个项目需要的规则；「优化 .gitignore」在已有文件的基础上，只补现在缺的那几条。两个按钮都**只追加，不删你写的任何一行**。
-  写入前有一道**过滤**：模型偶尔会给出 `*.json`、`src/`、`*` 这类会把整个项目藏起来的规则，或者加个代码围栏、写句解释——这些都会被丢掉，只留下真正能用的模式。
-  没有可用模型时会**退回内置的分组规则**（同样只追加），并在提示里说明这次是「内置规则」而不是「模型推断」，不会假装。
-
-设置写回插件自己的配置行（`cordis.patch.yml`），所以升级不丢、在插件页也能看到、改完 profile 会热重载一次。
-
-**破坏性操作集中在历史视图**：撤销提交、回滚到某个提交点都在那里，用红色按钮 + 两段确认（先选模式，丢弃改动还要再确认一次），并且会先说明后果。日常的提交区因此只剩写说明和提交两件事。
-
-**错误提示跟着语言设置走**（`lib/text.js`）：面板上看到的每一条消息都按 `messageLanguage` 输出，**默认中文**（`auto` 对生成内容意味着"跟随仓库"，但 git 报错没有这种信号，所以除显式 `en` 之外一律中文）。翻译只在**一个边界**完成——面板应答的信封——所以核心代码里一条消息只写一次，不必在每个调用点穿线。**Agent 工具的描述与结果保持英文**，那些是给模型读的。
-
-git 自己的话也尽量照顾：macOS 上的 `git` 不带消息目录（`LC_ALL=zh_CN` 无效），所以常见整句按**整条匹配**替换。必须是整条——替换半句会得到既不像中文也不像英文的东西，比不翻更糟；匹配不上就原样保留。
-
-**失败信息会一直留着，而且说的是原因**：以前两条路都会把它弄没——动作失败后紧跟的那次刷新会立刻清掉提示（所以只闪一下），而每 5 秒的轮询也会在下次成功读取时清掉它。现在只有「状态读取自己产生的」提示才会被状态读取清除，动作产生的提示留到你下一次操作为止。另外 git 推送失败时先打印 `To <url>` 再打印原因，旧代码取第一行，于是整条错误就只剩一个仓库地址；现在会挑出 `! [rejected] … (fetch first)` 这样的原因行。另外**只取 stderr**：stdout 是进度日志，把两者拼起来会得到「…would be overwritten by merge: On branch main」这种半句话；原因行以冒号结尾时会把后面的文件列表一起带上，否则读起来像句子断在半截。
-
-**模型没写出东西时会重试一次**：推理模型的思考也计入输出预算，所以偶尔会出现"想满了额度、一个字没写"。这时不会直接报「the model returned an empty explanation」，而是**把预算加倍重试一次**；仍然失败才说明真正的原因（用掉了多少 token、其中多少是思考）。只对"空答案"重试——provider 报错、被取消、模型要求调用工具都是明确的决定，不是抖动。另外，如果某个适配器不逐 token 推送、而是直接给一个完整的文本块，现在也能读到。
-
-**合并分支**：分支浮层里每个非当前分支都有一个「合并」按钮，把它合到当前分支。快进、普通合并都直接完成并提示；**冲突时不会假装成功**——git 会停在合并中间，面板报出哪些文件需要决定，批量操作那一行同时长出「中止合并」，随时可以退回合并之前。合并也走 `git_branch` 的 `action: "merge"` / `"abort"`，所以 Agent 能做同样的事。
-
-**鼠标悬停有说明文字**：DSH 的外壳用的是它自己的 tooltip 组件，插件里的原生 `title` **不会显示**——所以面板自己做了一个气泡，锚在面板根节点上（放在按钮内部会被 hero 的 `overflow:hidden` 裁掉），并做了左右夹取避免贴边溢出。鼠标移开或失焦即消失。
-
-**AI 参与的按钮有 AI 标记**：生成说明、提交前审阅、拆分提交、解释改动、`.gitignore` 推断——文字按钮上是一个小 `AI` 标签，图标按钮上是右上角一个角标；悬停说明里也写明「· AI」。按下去之前就知道哪次会调用模型。
-
-**提交前审阅**（提交区那个放大镜图标）：让模型读一遍**暂存**的改动，只报告真会出问题的地方——算错的结果、漏掉的边界、没处理的错误、留下的调试输出、被提交的密钥或本地路径、没有测试的行为改动。每条给出严重级别、文件:行号、一句话说明和一句话建议，**点一下就能跳到那个文件的差异**。它被明确要求「不要为了显得有用而凑数」，也可以什么都不报——那是一个正常的结果（会直说"没有发现值得说的问题"）。
-
-**拆分提交**（旁边的分叉图标）：把暂存的改动按**意图**分成几个能独立成立的提交，每组给出完整的提交说明和它包含的文件，点「提交这一组」就只提交这一组，其余文件**保持暂存**，然后自动为剩下的重新规划一次。适用于"攒了一堆改动、只能写一句笼统说明"的情况。
-
-两个功能都把模型的回答当**不可信输入**处理：
-
-- 要求严格的 JSON，解析前先剥掉代码围栏、定位数组；解析不出来就**把原文附上并明说没解析成功**，而不是假装没有发现。
-- **报告里出现的路径必须真的在这次暂存里**，否则丢弃并告诉你丢了几条——一个看起来合理、但差异里根本没提过的路径，是读者最难识破的错误。
-- 拆分方案必须**恰好覆盖全部暂存文件**：漏掉文件会明确提示（还有文件没被覆盖），重复出现的路径只取一次。
-- 这些是**给你做判断的材料，不是替你做的决定**：没有"自动修复"，也没有"自动提交"。
-
-**修订上次提交**：提交区多了「修订上次提交」——把暂存内容并进上一个提交，按钮同时变成「修订」。**说明框留空就沿用原来的说明**（不会去问模型要一条新的），填了就用你填的。
-
-**标签**（`git_tag`）：历史视图里展开任意提交，输入名字点「打标签」即可；标签会作为徽标显示在提交图上。支持列表、创建（有说明就是附注标签）、删除、推送到远程。名字交给 `git check-ref-format` 判断，不合法的名字不会进到命令里。
-
-**还原 / 遴选 / 变基**：展开提交后有三个动作。
-- **还原这次提交**（revert）：新增一个反向提交，**不改写历史**——已推送的提交应该用它，而不是回滚。
-- **挑到当前分支**（cherry-pick）：把这个提交的改动作为新提交应用过来。
-- **变基到此**（rebase）：把当前分支重放到这个提交之上。会改写提交，所以**先弹警告再确认**；中途冲突可以中止。
-
-**中止按钮会认操作**：git 在 `.git` 里留下的标记（`MERGE_HEAD`、`rebase-merge`、`CHERRY_PICK_HEAD`、`REVERT_HEAD`）会被读出来，所以列表上方那个按钮会写成「中止合并 / 中止变基 / 中止遴选 / 中止还原」，并调用对应命令——而不是一律当作合并。
-
-**贮藏改动**（`git_stash`）：把没写完的改动先收起来，不用为了切任务而提交半成品。支持 push / list / pop / apply / drop，位置参数由插件转成 `stash@{N}` 而不是让文本直接进 git 命令。面板顶部有一个箱子图标：干净时点一下收起改动，有贮藏时显示数量，点开是列表，每条都可以「取回」（pop）、「保留取回」（apply）或删除（需二次确认）。
-
-**顶部的同步按钮**（两个循环箭头的图标）就是 VS Code 那种「同步更改」：一次点击先**获取**（这样领先/落后才是远程的当前状态，而不是上次获取时的），然后**该拉就拉、该推就推**。两点是刻意的：
-
-- 拉取用 `--ff-only`。一键操作不该替你造出合并提交，也不该留下一个冲突中的工作区——所以**分叉时会停下来告诉你**，而不是自己 merge。
-- 分支还没有上游、或者远程跟踪分支已被删掉（`fetch --prune` 之后很常见），都会被当成"这个分支还没发布"，用 `-u` 推上去；否则提交会一直躺在本地没人推。
-
-**丢弃会按路径的实际情况处理**：改过的文件从索引恢复原样；**新增（未跟踪）的文件没有"原样"可恢复，所以丢弃就是把它删掉**。以前这里只调 `git restore`，而它对未跟踪文件是静默无效的——于是提示"已丢弃"、文件却还在。现在先问 git 哪些路径是未跟踪的，恢复该恢复的、删除该删除的。被 `.gitignore` 忽略的文件**不在范围内**（`git clean` 不加 `-x`），所以 `.env`、构建产物不会被误删；想保留未跟踪文件就传 `keepUntracked`。
-
-**提示信息是悬浮的**：成功/失败/等待这类消息浮在列表上方，**不占布局**——以前它是行内块，出现和消失都会把整个列表推上推下，而且贴着下面的按钮。现在锚在内容区顶部（持久性的 chrome 之下），带边框和阴影，浮在列表之上；下面的列表一动不动。
-
-**刚启动时会自己等会话就绪**：侧边栏在会话还没起来之前就把标签页恢复了，所以新开 dsh 时面板的第一次请求可能来早了。这时它不会甩一句「session … is not live」给你——而是按 200ms → 4s 的退避重试，界面上只显示「正在等待会话就绪…」；等到了就正常渲染。重试预算用完（约 10 秒）才说明情况，之后每 5 秒的轮询继续各探一次，会话后来起来了会自动恢复。换了会话则重新给一次预算。
-
-**列表和提交区之间有一条可拖动的分割线**：往上拖把高度给**说明输入框**（多出来的空间进到你正在打字的那个框里，而不是把下面的按钮整体顶上去），往下拖把空间还给列表；双击恢复默认高度。这是唯一能改变输入框高度的入口，所以双击复位是必要的退路。
-
-面板每 5 秒静默重读一次仓库（页面不可见或正在执行操作时跳过），所以 Agent 在对话里提交之后，面板会自己跟上。
-
-## 它同时给了 dsh 什么
-
-十五个 Agent 工具（`git_*`），注册在 Host 侧：
-
-| 工具 | 作用 |
+| Feature | What it does |
 | --- | --- |
-| `git_status` | 当前分支、上游领先/落后、已暂存 / 已修改 / 未跟踪 / 冲突的完整清单 |
-| `git_diff` | 指定范围的补丁：`all` / `staged` / `unstaged` / `last-commit` / `range` |
-| `git_stage` | `add` / `unstage` / `discard`（丢弃必须显式给出路径） |
-| `git_commit` | **不传 `message` 就自动生成**；也支持 `amend` / `signoff` / `dryRun` 预览 / `push` |
-| `git_reset` | 撤销最近一次提交：`soft` 保留已暂存 / `mixed` 保留未暂存 / `hard` 丢弃，并报告该提交是否已经推送过 |
-| `git_log` | 最近提交 |
-| `git_init` | 初始化仓库、写 `.gitignore`（分组或字面文本）、可选首次提交 |
-| `git_config` | 读写 `local` / `global` / `effective` 配置 |
-| `git_sync` | `push` / `pull` / `fetch` |
-| `git_branch` | 列出、新建、切换、删除分支；`merge` 合并指定分支到当前分支，`abort` 中止合并 |
-| `git_stash` | 贮藏：列出、收起改动、恢复（pop/apply）、删除 |
-| `git_tag` | 标签：列出、创建（附注或轻量）、删除、推送 |
-| `git_revert` | 撤销某个提交（新增反向提交，不改写历史） |
-| `git_cherry_pick` | 把别处的提交作为新提交应用到这里 |
-| `git_rebase` | 变基到某处，以及中止 / 继续 |
+| **Commit message** | Generated from the staged diff. If you have already typed something, the button becomes *Refine draft*: the model keeps your intent and fills in the rest instead of replacing it. |
+| **Review before commit** | Reads the staged changes and reports only what would bite — a wrong result, a missed edge case, an unhandled error, a committed secret, debug output left in, a behaviour change with no test. Click a finding to open that file's diff. |
+| **Split this commit** | Divides the staged changes into commits that each stand on their own, with a message for each. Commit one group; the rest stay staged and the plan is redrawn. |
+| **Explain a change** | Two to five bullets on what a file's change does, so you can review without reading every line. |
+| **`.gitignore`** | Infers the rules from the project's manifests and layout. One button creates it, one adds what is missing. |
 
-### 提交说明是怎么生成的
+Buttons that call a model are marked **AI**. Every generation uses the session's default model — there is no second model to configure.
 
-`git_commit` 不带 `message`、或面板点「生成说明」时，插件收集：暂存区逐文件改动量、完整补丁、未暂存改动、未跟踪文件内容抽样、当前分支、以及最近 15 条提交标题——交给当前会话的默认模型，按 Conventional Commits 规则生成。最近提交标题同时用于**学习这个仓库的既有风格**（`messageLanguage: auto` 时会跟随仓库既有提交的语言）。设置里填的自定义要求会作为最高优先级追加在提示词最后。
+## Branches, history, remotes
 
-面板的「解释改动」走同一条模型通路，只是提示词换成「向没读过补丁的审查者解释这一个文件」，输出 2–5 条要点。
+- **Branch selector** — switch, create, delete, and merge any branch into the checked-out one. A conflicted merge is reported with the files that need a decision, and can be aborted.
+- **Commit graph** — every branch and remote-tracking branch, not just this one. Expand a commit for its full message, the files it touched, and what you can do to it: rewind, revert, cherry-pick, rebase, or tag. Click a changed file to see its diff inside that commit.
+- **Remotes** — push, pull, fetch, and a **Sync** that fetches, fast-forwards, then pushes. It refuses to merge a diverged branch rather than inventing a merge commit.
+- **Stash** — set work aside and take it back later (pop, apply, drop).
 
-生成失败不会静默降级成一句废话：错误连同原因一起返回，并提示改用 `git_diff` 自己写。
+## Setup
 
-## 结构
+One click initialises a repository and writes the local commit identity; two buttons handle `.gitignore`. Nothing is chosen from a list of ecosystems — the plugin reads the project and decides.
 
-```
-lib/plugin.js     bundle 入口：插件身份 + 按修订号加载实现
-lib/impl.js       Host：createOperations() 一处实现，注册九个工具
-lib/rpc.js        Host：面板端点（/api/dsh-git 上的精确 Fetch 路由）
-lib/git-core.js   纯 git 操作 + 补丁行解析（diffRows），注入 exec 即可脱离 DSH 测试
-lib/messages.js   提交说明的提示词与模型调用
-lib/text.js       面板消息的中英文本与 git 短语表
-lib/review.js     提交前审阅与拆分提交的提示词、严格的 JSON 解析与校验
-lib/client.js     浏览器半边：右侧栏 Git 面板
-```
+## Configuration
 
-面板和工具**共用同一份实现**：`createOperations()` 产出操作对象，工具是它的一个调用方，`/api/dsh-git` 的端点分发是另一个。改一处两边同时生效，不会出现两套逻辑不一致。
+Settings live in this plugin's own row in `cordis.patch.yml`, so they survive upgrades and stay visible on the Plugins page. Everything below is a button or a checkbox; there is nothing to type unless you want custom instructions.
 
-面板通过 `connection.fetch.register()` 注册 `/api/dsh-git` 这条精确 Fetch 路由，因此**继承 `/api` 前缀已有的 Host/Origin 校验与浏览器鉴权**，而且不写会话日志——每 5 秒刷新一次也不会污染 transcript。
-
-（不用 `connection.rpc.handle()` 是因为它把路由挂在 `owner.effect(() => owner.webServer.register(route))` 上，而那里的 `owner` 是 connection 插件自己的 context，从未注入 `webServer`，任何外部插件调用都会以 `cannot get property "webServer" without inject` 失败。`dsh-context` 把同样的调用包在 `try/catch` 里，所以它是静默失效的。）
-
-## 配置
-
-改 `cordis.patch.yml` 里的 `config`：
-
-| 键 | 默认 | 说明 |
+| Key | Default | Meaning |
 | --- | --- | --- |
-| `defaultBranch` | `main` | `git_init` 未指定时的首个分支名 |
-| `messageLanguage` | `auto` | `auto` / `en` / `zh` |
-| `messageStyle` | `conventional` | `conventional`（`feat: ...`）或 `plain` |
-| `messageTemplate` | 未设置 | 追加在默认规则之后的自定义要求，优先级最高 |
-| `maxPromptBytes` | `24000` | 每次交给模型的补丁字节上限 |
-| `maxDiffBytes` | `80000` | 补丁返回字节上限 |
-| `commandTimeoutMs` | `60000` | 单条 git 命令超时；网络命令放宽到 4 倍 |
-| `signoff` | `false` | 是否给提交加 `Signed-off-by` |
+| `messageLanguage` | `auto` | Language of generated text: `auto` (follow the repository), `en`, `zh`. When unset or `auto`, the panel's own messages read as Chinese. |
+| `messageStyle` | `conventional` | `conventional` (`feat: …`) or `plain`. |
+| `messageTemplate` | — | Extra instructions, appended last so they override the defaults. |
+| `signoff` | `false` | Add a `Signed-off-by` trailer. |
+| `defaultBranch` | `main` | Branch created by *Initialise*. |
+| `maxPromptBytes` | `24000` | Diff text handed to the model per change set. |
+| `maxDiffBytes` | `80000` | Patch text a tool returns before truncating. |
+| `commandTimeoutMs` | `60000` | Per git command; network commands get four times this. |
 
-## 安全边界
+## Safety
 
-- 所有 git 参数单引号转义，路径校验不许逃出仓库根目录。
-- `discard` 是破坏性操作：工具侧必须显式给 `paths`（全丢传 `["."]`），面板侧需要二次确认；未跟踪文件默认保留。
-- 命令固定前缀 `GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true GIT_PAGER=cat`，不会卡在凭据或编辑器上。
-- 面板端点只接受 POST + JSON，请求体上限 1 MiB，且必须先通过连接层鉴权。
+- **Nothing destructive happens on a single click.** Discarding, deleting a branch, dropping a stash, rebasing, and rewinding all ask first, and say what will be lost.
+- **Rewinding and reverting are separate**, because they are: rewinding moves the branch and rewrites history, reverting adds an inverse commit and is safe for anything already pushed. The panel warns before a rewind that would rewrite published history.
+- **Model output is treated as untrusted input.** A review finding that names a file which is not staged is dropped; a split plan that does not cover every staged file is flagged; an answer that does not parse is shown as-is rather than reported as "nothing found".
+- **Nothing is committed, pushed, or repaired automatically.** The AI features produce material for a decision, not the decision.
 
-## 开发
+## Development
 
-```bash
-node test/smoke.mjs     # 497 项断言，跑真实 git，不需要 DSH
+```sh
+node test/smoke.mjs     # 497 assertions; runs real git, no DSH required
 ```
 
-覆盖四层：
+```
+lib/plugin.js      entry point; reloads the implementation when it changes
+lib/impl.js        operations + the fifteen agent tools
+lib/git-core.js    git operations, patch parsing, the commit-graph layout
+lib/messages.js    prompts and model calls for text generation
+lib/review.js      pre-commit review and split planning
+lib/text.js        panel messages in both languages
+lib/rpc.js         the panel's HTTP route
+lib/client.js      the browser half (no build step, no dependencies)
+```
 
-1. **git 行为**——用 `node:child_process` 冒充 `ctx.shell`，在临时仓库里跑真 git（并隔离 `HOME`，机器上的全局配置影响不了结果）。
-2. **工具注册**——用假 `ctx` 跑 `apply`，检查九个工具的名字、参数 schema、结果渲染，并按 `@deepseek-ai/dsh-tools` 的 `assertSupportedJsonSchema` 规则复刻一份 **schema 子集校验**，让会被 Host 拒绝的 schema 在本地就失败。
-3. **面板桥**——驱动真实的 Fetch handler：请求体解析、状态码、`{ok,value}` / `{ok,error}` 信封、未知端点、不存在的会话，以及暂存 / 差异 / 提交 / 配置 / 设置 / 回滚 / `.gitignore` / 未跟踪预览整条链路。
-4. **界面能渲染**——在 Node 里用一套替身 React 把面板的每一条渲染路径都跑一遍（首次挂载、没有仓库、读取失败、干净工作区、游离 HEAD、缺身份、三个视图、审阅与拆分视图），任何一条抛错都会带上组件名。这不是纸上谈兵：FileRow 里一个不在作用域的 tooltip 助手就是这么被找出来的——插槽捕获到抛错、把整个标签页退役，用户看到的就是一片空白。断言还点名 FileRow、DiffBody、GraphCell 必须真的渲染过，否则"提前中断"也会假装没有抛错。
-5. **审阅与拆分的解析**——认得出带围栏的 JSON；指向未暂存路径的条目被丢弃并计数；解析失败会明说而不是当作"没问题"；空数组是合法的干净结果；未知严重级别回落；行号不是数字就置空。拆分方案漏文件会被标记、重复路径只取一次、没有说明或只有未知路径的组被丢弃。再用真仓库验证：审阅与拆分能跑在真实改动集上、提示词里确实列了暂存路径、**提交一组之后其余文件仍然暂存**（否则下一轮就没得规划了）。
-6. **提交内的单文件差异**——`scope: "commit"` 能为某次提交的某个文件给出补丁、能解析成面板画的行、仓库里不存在的路径给空补丁、未知版本被拒。
-7. **消息语言**——`auto`/未设走中文、显式 `en` 走英文、未知值回落中文；字典里**每一条都用它自己的英文形态回译一遍**，结果必须等于它的中文；插件前缀加 git 尾句能各自翻译；推送被拒、覆盖警告都有中文；认不出的整句**原样透传**（不产出半翻译）。再加真仓库验证：覆盖警告带上文件名、且不带 stdout 的 "On branch"。
-8. **标签 / 还原 / 遴选 / 变基**——标签的创建（轻量与附注）、非法名字、重名与 force、删除、无远程时拒绝推送、**附注标签能作为 ref 出现在提交图上**（标签对象要 peel 到提交）；还原新增提交且原提交仍在、未知版本被拒、`--no-commit` 之后能中止并回到干净状态；遴选把改动带过来且是新提交、未知版本与空列表被拒；变基冲突时报告文件、`.git` 标记被识别为 rebase、可中止、中止后文件回到本分支。
-9. **合并与贮藏**——快进合并、`--no-ff` 生成合并提交、已在其中时无事可做、拒绝合并当前分支和不存在的分支；冲突时报告冲突文件、工作区确实停在合并中、`status` 里能看到冲突、`abort` 之后 `MERGE_HEAD` 消失且文件回到本分支。贮藏：空贮藏提示、干净树提示无事可做、push 后改动消失且树干净、带标签、apply 保留、pop 移除、drop 清空、空贮藏拒绝操作。
-10. **空答案的恢复路径**——想满预算时重试且预算翻倍、重试成功则返回结果、provider 报错不重试、只给文本块不给增量也能读出答案、token 用量随结果返回。
-11. **同步两个方向**——用一个裸仓库当远程（往非裸仓库推送会被 git 拒绝，那样只测到拒绝路径）：无事可做时不动、落后时快进、领先时推送、分叉时拒绝合并且不留 `MERGE_HEAD`、分支没有上游时自动 `-u` 发布。
-12. **丢弃按路径类型分流**——未跟踪文件被真的删除、改过的文件被恢复、同时含两者的目录两者兼顾、`.gitignore` 忽略的文件不受影响、`keepUntracked` 能保留未跟踪文件，以及仍然拒绝空路径和仓库外的路径。
-13. **草稿感知的生成与忽略规则过滤**——空草稿与有草稿时提示词不同、草稿原样进入请求；`normalizeIgnorePatterns` 保留产物模式、丢弃围栏/注释/散文、以及 `*`、`*.json`、`src/` 这类会把项目藏起来的规则。再用真目录验证推断链路：没有模型时退回内置规则并标明来源、写进去的行都在磁盘上、第二遍无事可做、用户自己写的行不会被改。
-14. **回滚到指定提交与单个提交详情**——用真仓库验证：拒绝不存在的目标、回滚到指定提交后历史长度正确、报告丢弃了几个提交、保存的改动仍在暂存区；`commitDetail` 的标题/正文拆分、多段正文、涉及文件与行数、父提交。
-15. **提交图泳道**——线性历史一条道、合并分叉两条道、两个分支各占一条并在共同祖先处汇合，以及空历史。再用一个真仓库验证 `history`：空仓库不报错、每个提交都有父链、根提交没有父、`--all` 能看到未检出分支的提交、ref 徽标指对提交、`head` 标对位置。
-16. **补丁行解析**——把 unified diff 解析成带双侧行号的行走，验证行号推进、hunk 段落、替换行的「哪一段变了」标记、新增/删除/重命名文件标记、以及空补丁和无换行标记的边界。这个解析器放在 Host 上而不是面板里，正是为了能被这一层覆盖。
-17. **界面静态自查**——脚本核对：样式表里定义的每个 class 都在标记里用到、标记里用到的每个 class 都有样式、面板内零字面颜色、两套 i18n 字典键集合完全一致且没有漏用的 `t()` 键。
-18. **提示词与消息归一化**——假 LLM 验证路由解析、system prompt、代码围栏/引号/署名 trailer 的清洗，以及文件改动解释。
+The bundle has no dependencies at all — nothing to install, nothing to duplicate inside the profile. `lib/client.js` is hand-written, so a change to it needs only a page refresh; a change to the Host half needs the bundle reloaded.
 
-### 界面约定
+## License
 
-面板自己画控件，不引入任何 Harness 前端包，也不依赖宿主组件的 class。因此有几条硬规矩：
-
-- **只用主题 token 上色。** 面板样式表里没有任何字面颜色（`#hex` / `rgb()` 一个都没有），全部走 `--dsw-alias-*`，所以深浅色切换、以及部署方改品牌色都会自动跟上。唯一用字面颜色的是 `icon.svg`（插件卡片的图稿），这是允许的。
-- **图标是自己画的一整套 SVG**，统一 24px 网格、1.8 描边、`currentColor`。不用 `⟳ ⚙ ✕` 这类字体符号——它们在不同字体下渲染不一致，也是面板显得廉价的主要原因。
-- **状态色只用在有意义的地方**：状态字母的描边、分组计数胶囊、领先/落后徽标、展开差异的左边框、焦点环，以及差异视图里新增/删除行的底色。品牌色负责"签名"：面板顶部 2px 渐隐线、hero 头部 5% 淡染、主按钮。
-- **半透明色用 `color-mix`**，基底仍是主题 token（例如 `color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent)`），并且前面先声明一个纯 surface 色做兜底，所以即使浏览器不支持也只是少一层底色，不会变成硬编码颜色。
-- **分支选择区刻意无颜色**：只用边框 / 表面 / 文字三层 token，靠形状和 hover 表达可交互，不靠色彩。
-- **代码里有一个自查脚本**（见下），保证不会留下没写样式的 class、没用的样式、或混进来的字面颜色。
-
-### 两条平台限制，代码里都绕开了
-
-- **没有模块热重载**：DSH Desktop 不给 Node 传 `--expose-internals`，所以 `@deepseek-ai/dsh-hmr` 的模块级重载不可用（`hmr.root` 一旦非空，那一行会直接激活失败，还会连带弄坏 profile 配置热重载——所以这个 bundle 绝不去覆盖 `hmr`）。`lib/plugin.js` 因此按**所有实现文件的最新 mtime**取一个修订号再去 `import`：改完在插件页把这个 bundle 关掉再打开就是新代码，不用重启 App，也不会无限堆积模块。注意入口模块自身是被缓存的，改 `plugin.js` 需要重启才生效。
-- **`dsh.client` 声明只扫描一次**：`@deepseek-ai/dsh-client-modules` 会把「这个包不是客户端包」的结论按 loader specifier 缓存到进程结束，所以后加的 `dsh.client` 在旧 specifier 下永远不会被发现。patch 里的行因此**用路径而不是包名寻址**（插入的相对行会锚定在 patch 文件旁），扫描每次都读最新 manifest，浏览器半边不必等重启。改完 `lib/client.js` 刷新页面即可。
+[MIT](LICENSE)
