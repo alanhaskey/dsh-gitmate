@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildGraph, createGitCore, diffRows, shellQuote } from '../lib/git-core.js';
+import { buildGraph, createGitCore, diffRows, quoteFor, shellQuote } from '../lib/git-core.js';
 import {
   buildUserPrompt,
   explainFileChange,
@@ -154,13 +154,17 @@ const TEST_ENV = {
   GIT_CONFIG_SYSTEM: '/dev/null',
 };
 
+/** The last request handed to the shell stand-in, for asserting the contract. */
+let lastShellRequest = null;
+
 /** A minimal stand-in for `ctx.shell`, backed by a real bash process. */
-function childProcessExec({ command, cwd, stdin, timeoutMs }) {
+function childProcessExec({ command, cwd, stdin, timeoutMs, env }) {
+  lastShellRequest = { command, cwd, env };
   return new Promise((settle) => {
     const child = execFile(
       '/bin/bash',
       ['-c', command],
-      { cwd, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, env: TEST_ENV },
+      { cwd, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, env: { ...TEST_ENV, ...(env ?? {}) } },
       (error, stdout, stderr) => {
         let code = 0;
         if (error) code = typeof error.code === 'number' ? error.code : 1;
@@ -180,6 +184,14 @@ function childProcessExec({ command, cwd, stdin, timeoutMs }) {
 }
 
 const core = createGitCore({ exec: childProcessExec, config: { defaultBranch: 'main' } });
+
+/** A stand-in that answers with Windows-style output, to check the parsers. */
+function crlfExec(reply) {
+  return async (request) => {
+    lastShellRequest = request;
+    return { code: 0, stdout: reply(request), stderr: '', timedOut: false, aborted: false, denied: false };
+  };
+}
 
 try {
   section('shell quoting');
@@ -623,6 +635,48 @@ try {
   check('the overwrite warning names the files', localizedOverwrite.includes('f.txt'), localizedOverwrite);
   check('and says what to do', localizedOverwrite.includes('提交或贮藏'), localizedOverwrite);
   check('and is not glued to stdout', !localizedOverwrite.includes('On branch'), localizedOverwrite);
+
+  section('the git invocation works under a Windows shell too');
+  // Windows gets the Harness's PowerShell executor, where `VAR=value git …` is
+  // not a command at all: it fails as an unknown term. The environment has to be
+  // handed over as environment entries instead.
+  await core.status({ cwd: toolRepo });
+  check('the command carries no POSIX environment prefix', !/^[A-Z_]+=/.test(lastShellRequest.command), lastShellRequest.command);
+  check('and starts with the interpreter-agnostic git call', lastShellRequest.command.startsWith('git --no-pager '), lastShellRequest.command);
+  check(
+    'the environment is passed as real entries',
+    lastShellRequest.env?.GIT_TERMINAL_PROMPT === '0' && lastShellRequest.env?.GIT_PAGER === 'cat',
+    lastShellRequest.env,
+  );
+  check('the pager is disabled by a flag, not an assignment', lastShellRequest.command.includes('--no-pager'), lastShellRequest.command);
+
+  // PowerShell doubles a quote; a POSIX shell closes, escapes and reopens.
+  check('a POSIX argument is quoted for a POSIX shell', quoteFor("it's", false) === `'it'\\''s'`, quoteFor("it's", false));
+  check('and quoted for PowerShell when that is the shell', quoteFor("it's", true) === "'it''s'", quoteFor("it's", true));
+  check('a plain argument is quoted the same way in both', quoteFor('plain', false) === "'plain'" && quoteFor('plain', true) === "'plain'");
+
+  // A Windows shell answers with CRLF, and every parser here splits on newlines.
+  const crlfCore = createGitCore({
+    exec: crlfExec(() => '## main\r\n M one.txt\r\n?? two.txt\r\n'),
+    config: { defaultBranch: 'main' },
+  });
+  const crlfStatus = await crlfCore.status({ cwd: toolRepo });
+  check(
+    'a CRLF status read parses without stray carriage returns',
+    crlfStatus.unstaged.every((entry) => !entry.path.includes('\r')) &&
+      crlfStatus.untracked.every((path) => !path.includes('\r')),
+    { unstaged: crlfStatus.unstaged, untracked: crlfStatus.untracked },
+  );
+  const crlfPatch = createGitCore({
+    exec: crlfExec(() => 'diff --git a/x b/x\r\n--- a/x\r\n+++ b/x\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n'),
+    config: { maxDiffBytes: 8000 },
+  });
+  const parsedCrlf = await crlfPatch.diff({ cwd: toolRepo });
+  check(
+    'a CRLF patch parses into clean rows',
+    (parsedCrlf.rows ?? []).every((row) => !String(row.text ?? '').includes('\r')),
+    parsedCrlf.rows,
+  );
 
   section('undoing a commit is not the same as rewinding to it');
   // The panel's newest-commit button says "undo this commit", so the reset has to

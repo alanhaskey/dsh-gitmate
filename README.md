@@ -2,6 +2,8 @@
 
 **A Git panel in the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) sidebar — plus the same operations as fifteen agent tools.**
 
+Runs anywhere the Harness does: macOS, Linux, and Windows (PowerShell).
+
 English | [中文](README.zh.md)
 
 Review changes, read diffs, stage, commit with a generated message, merge, stash, sync, and rewind history without leaving the panel. Every operation is also a tool the agent can call, so asking in chat works too.
@@ -72,7 +74,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 ## Development
 
 ```sh
-node test/smoke.mjs     # 509 assertions; runs real git, no DSH required
+node test/smoke.mjs     # 518 assertions; runs real git, no DSH required
 ```
 
 ```

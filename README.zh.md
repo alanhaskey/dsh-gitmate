@@ -2,6 +2,8 @@
 
 **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 右侧栏里的 Git 面板 —— 同一套能力也注册成十五个 Agent 工具。**
 
+macOS、Linux、Windows（PowerShell）都能跑。
+
 [English](README.md) | 中文
 
 看改动、读差异、暂存、用生成的说明提交、合并、贮藏、同步、回滚历史——都不用离开面板。每个操作同样是 Agent 能调用的工具，所以在对话里说一句也能做。
@@ -72,7 +74,7 @@ dsh plugin --profile web add github:alanhaskey/dsh-gitmate
 ## 开发
 
 ```sh
-node test/smoke.mjs     # 509 项断言，跑真实 git，不需要 DSH
+node test/smoke.mjs     # 518 项断言，跑真实 git，不需要 DSH
 ```
 
 ```
