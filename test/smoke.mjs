@@ -578,6 +578,125 @@ try {
   const blanketDiscard = await runTool('git_stage', { cwd: toolRepo, action: 'discard' });
   check('git_stage refuses a blanket discard', blanketDiscard.value.ok === false && blanketDiscard.text.startsWith('error:'), blanketDiscard.text);
 
+  section('the panel never reads a binding before it exists');
+  // A `const` in the panel body sits in its temporal dead zone until the line
+  // that declares it, and two positions are evaluated *during* the render: a
+  // dependency array, and any expression outside a callback. Reading a later
+  // binding from either throws, the slot entry blanks, and the user gets an empty
+  // panel — which is how the stash effect and the abort label both broke.
+  /**
+   * Blank comments and literal text so their contents are not read as code.
+   *
+   * A template literal is special: its text is not code, but a `${…}`
+   * interpolation is evaluated where the template is, so those are kept.
+   */
+  function stripLiterals(line) {
+    let out = '';
+    let quote = null;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (quote === "'" || quote === '"') {
+        if (ch === '\\') { i += 1; continue; }
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (quote === '`') {
+        if (ch === '\\') { i += 1; continue; }
+        if (ch === '`') { quote = null; continue; }
+        if (ch === '$' && line[i + 1] === '{') {
+          let depth = 0;
+          let end = i + 1;
+          for (; end < line.length; end += 1) {
+            if (line[end] === '{') depth += 1;
+            else if (line[end] === '}') { depth -= 1; if (depth === 0) break; }
+          }
+          out += ` ${line.slice(i + 2, end)} `;
+          i = end;
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') { quote = ch; out += ' '; continue; }
+      if (ch === '/' && line[i + 1] === '/') break;
+      out += ch;
+    }
+    return out;
+  }
+
+  /** Blank `=> { … }` and `=> rest-of-line` bodies: they run when called, not now. */
+  function stripDeferred(text) {
+    let out = text;
+    for (let index = out.indexOf('=>'); index !== -1; index = out.indexOf('=>', index + 1)) {
+      let cursor = index + 2;
+      while (cursor < out.length && /\s/.test(out[cursor])) cursor += 1;
+      if (out[cursor] === '{') {
+        let depth = 0;
+        let end = cursor;
+        for (; end < out.length; end += 1) {
+          if (out[end] === '{') depth += 1;
+          else if (out[end] === '}') { depth -= 1; if (depth === 0) break; }
+        }
+        out = out.slice(0, cursor) + ' '.repeat(end - cursor + 1) + out.slice(end + 1);
+      } else {
+        let end = out.indexOf('\n', cursor);
+        if (end === -1) end = out.length;
+        out = out.slice(0, cursor) + ' '.repeat(end - cursor) + out.slice(end);
+      }
+    }
+    return out;
+  }
+
+  function findRenderOrderProblems(source) {
+    const lines = source.split('\n');
+    const code = lines.map(stripLiterals);
+    const params = new Set();
+    for (const line of code) {
+      for (const match of line.matchAll(/function\s+[A-Za-z_$][\w$]*\s*\(([^)]*)\)/g)) {
+        for (const raw of match[1].split(',')) {
+          const name = raw.trim().split(/[=:]/)[0].trim();
+          if (/^[A-Za-z_$][\w$]*$/.test(name)) params.add(name);
+        }
+      }
+    }
+    const decls = [];
+    code.forEach((line, index) => {
+      const match = /^ {8}const ([A-Za-z_$][\w$]*)\s*=\s*(.*)$/.exec(line);
+      if (match) decls.push({ name: match[1], line: index + 1, init: match[2] });
+    });
+    const declaredAt = new Map();
+    for (const decl of decls) if (!declaredAt.has(decl.name) && !params.has(decl.name)) declaredAt.set(decl.name, decl.line);
+
+    const deferred = /^(useCallback|useMemo|useState|useRef|useEffect)\(/;
+    const problems = [];
+    for (const decl of decls) {
+      if (deferred.test(decl.init)) continue;
+      let end = decl.line;
+      while (end < lines.length && !/;\s*$/.test(code[end - 1])) end += 1;
+      const text = stripDeferred(code.slice(decl.line - 1, end).join('\n'));
+      for (const [name, line] of declaredAt) {
+        if (name === decl.name || line <= decl.line) continue;
+        if (new RegExp(`(^|[^\\w$.])${name}\\b`).test(text)) {
+          problems.push(`eager: ${decl.name} (line ${decl.line}) reads ${name} declared at line ${line}`);
+        }
+      }
+    }
+    code.forEach((line, index) => {
+      const match = /^\s*\},\s*\[([^\]]*)\]\)?;?\s*$/.exec(line);
+      if (!match) return;
+      for (const raw of match[1].split(',')) {
+        const name = raw.trim();
+        if (name === '' || !declaredAt.has(name)) continue;
+        if (declaredAt.get(name) > index + 1) {
+          problems.push(`deps: line ${index + 1} depends on ${name} declared at line ${declaredAt.get(name)}`);
+        }
+      }
+    });
+    return problems;
+  }
+
+  const panelSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
+  const orderProblems = findRenderOrderProblems(panelSource);
+  check('no binding is read before it is declared', orderProblems.length === 0, orderProblems);
+
   section('the panel only names theme tokens that exist');
   // The published alias set, exactly as the live client Theme provider reports it
   // (cordis_inspect_query, platform=client, provider=Theme, method=listTokens).
