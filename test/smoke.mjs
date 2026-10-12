@@ -1057,6 +1057,48 @@ try {
   check('hard undo discarded the edit', (await core.diff({ cwd: undoRepo, scope: 'unstaged' })).patch.trim() === '');
   check('the published flag is false without an upstream', hardUndo.published === false, hardUndo);
 
+  section('discard handles a path by what it actually is');
+  const discardRepo = join(sandbox, 'discard-repo');
+  await core.init({ cwd: discardRepo });
+  await core.config({ cwd: discardRepo, action: 'set', key: 'user.name', value: 'Discard User' });
+  await core.config({ cwd: discardRepo, action: 'set', key: 'user.email', value: 'discard@example.com' });
+  writeFileSync(join(discardRepo, 'tracked.txt'), 'original\n');
+  writeFileSync(join(discardRepo, '.gitignore'), 'ignored-dir/\n');
+  await core.stage({ cwd: discardRepo, action: 'add' });
+  await core.commit({ cwd: discardRepo, message: 'chore: seed' });
+
+  // one modified tracked file, one brand-new file, one ignored file
+  writeFileSync(join(discardRepo, 'tracked.txt'), 'edited\n');
+  writeFileSync(join(discardRepo, 'brand-new.txt'), 'fresh\n');
+  mkdirSync(join(discardRepo, 'ignored-dir'), { recursive: true });
+  writeFileSync(join(discardRepo, 'ignored-dir', 'keep.txt'), 'ignored but mine\n');
+
+  const discardNew = await core.stage({ cwd: discardRepo, action: 'discard', paths: ['brand-new.txt'] });
+  check('discarding an untracked file succeeds', discardNew.ok === true, discardNew);
+  check('and reports the deletion', discardNew.removed?.includes('brand-new.txt'), discardNew.removed);
+  check('and the file is gone from disk', !existsSync(join(discardRepo, 'brand-new.txt')), existsSync(join(discardRepo, 'brand-new.txt')));
+
+  writeFileSync(join(discardRepo, 'brand-new.txt'), 'fresh again\n');
+  const discardTracked = await core.stage({ cwd: discardRepo, action: 'discard', paths: ['tracked.txt'] });
+  check('discarding a tracked edit restores it', discardTracked.ok === true && readFileSync(join(discardRepo, 'tracked.txt'), 'utf8') === 'original\n', readFileSync(join(discardRepo, 'tracked.txt'), 'utf8'));
+  check('and reports no deletion', (discardTracked.removed ?? []).length === 0, discardTracked.removed);
+
+  // a directory holding both kinds: the modification is reverted, the new file removed
+  writeFileSync(join(discardRepo, 'tracked.txt'), 'edited again\n');
+  const mixed = await core.stage({ cwd: discardRepo, action: 'discard', paths: ['.'] });
+  check('a directory discard reverts the edit', readFileSync(join(discardRepo, 'tracked.txt'), 'utf8') === 'original\n', mixed);
+  check('and removes the untracked file inside it', !existsSync(join(discardRepo, 'brand-new.txt')), mixed.removed);
+  check('while leaving ignored files alone', existsSync(join(discardRepo, 'ignored-dir', 'keep.txt')), 'ignored file was removed');
+
+  // the opt-out still keeps untracked work
+  writeFileSync(join(discardRepo, 'kept.txt'), 'do not delete me\n');
+  const kept = await core.stage({ cwd: discardRepo, action: 'discard', paths: ['.'], keepUntracked: true });
+  check('keepUntracked leaves the file in place', kept.ok === true && existsSync(join(discardRepo, 'kept.txt')), kept);
+  check('and says how many were kept', kept.untracked >= 1 && kept.keepUntracked === true, kept);
+
+  check('discard still refuses to run without paths', (await core.stage({ cwd: discardRepo, action: 'discard' })).ok === false);
+  check('discard still refuses a path outside the repository', (await core.stage({ cwd: discardRepo, action: 'discard', paths: ['../escape.txt'] })).ok === false);
+
   section('rewind to a chosen commit');
   const rewindRepo = join(sandbox, 'rewind-repo');
   await core.init({ cwd: rewindRepo });
