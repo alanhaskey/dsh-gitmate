@@ -624,6 +624,211 @@ try {
   check('and says what to do', localizedOverwrite.includes('提交或贮藏'), localizedOverwrite);
   check('and is not glued to stdout', !localizedOverwrite.includes('On branch'), localizedOverwrite);
 
+  section('every view of the panel renders without throwing');
+  {
+    const Fragment = Symbol('Fragment');
+    const stateOrder = [];
+    const effectErrors = [];
+    function runSafely(fn, label) {
+      try {
+        const cleanup = fn();
+        return null;
+      } catch (error) {
+        return `${label}: ${error && error.message}\n${error && error.stack}`;
+      }
+    }
+    let overrides = {};
+    const React = {
+      Fragment,
+      createElement(type, props, ...children) {
+        return { type, props: { ...(props ?? {}), children: children.length <= 1 ? children[0] : children } };
+      },
+      useState: (initial) => {
+        const value = typeof initial === 'function' ? initial() : initial;
+        const index = stateOrder.length;
+        stateOrder.push(value);
+        return [overrides[index] === undefined ? value : overrides[index], () => {}];
+      },
+      useEffect: (fn) => { effectErrors.push(runSafely(fn, 'useEffect')); },
+      useLayoutEffect: (fn) => { effectErrors.push(runSafely(fn, 'useLayoutEffect')); },
+      useCallback: (fn) => fn,
+      useMemo: (fn) => fn(),
+      useRef: (initial) => ({ current: initial }),
+      useContext: () => undefined,
+      memo: (component) => component,
+    };
+
+    globalThis.setInterval = () => 0;
+    globalThis.clearInterval = () => {};
+    globalThis.setTimeout = () => 0;
+    globalThis.clearTimeout = () => {};
+    globalThis.requestAnimationFrame = () => 0;
+    globalThis.cancelAnimationFrame = () => {};
+    globalThis.fetch = () => new Promise(() => {});
+
+    const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
+    let load = null;
+    globalThis.window = { __ModuleLoader__: { load: (r) => { load = r; } } };
+    globalThis.document = { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} };
+    new Function('require', 'window', 'document', source)(
+      (id) => { if (id === 'react') return React; throw new Error(`unexpected require(${id})`); },
+      globalThis.window,
+      globalThis.document,
+    );
+
+    const api = load.factory((id) => { if (id === 'react') return React; throw new Error(`unexpected require(${id})`); });
+    let Panel = null;
+    api.apply({
+      effect: () => () => {},
+      inject: (deps, cb) => { cb({ locale: { register: () => () => {}, bind: () => (k) => k } }); return () => {}; },
+      get: () => undefined,
+      sidebarRightTabs: { register: () => () => {} },
+      slots: {
+        register: (options, component) => { if (options?.name === 'sidebar.right.pane.tab') Panel = component; return () => {}; },
+        inject: (key, callback) => { callback(); return () => {}; },
+      },
+      locale: { register: () => () => {}, bind: () => (k) => k },
+      logger: { info() {}, warn() {}, error() {} },
+    });
+
+    function walk(node, seen) {
+      if (node === null || node === undefined || typeof node === 'boolean') return;
+      if (typeof node === 'string' || typeof node === 'number') return;
+      if (Array.isArray(node)) { for (const child of node) walk(child, seen); return; }
+      if (typeof node.type === 'function') {
+        seen.count += 1;
+        seen.names.add(node.type.name || 'anonymous');
+        let rendered;
+        try {
+          rendered = node.type(node.props ?? {});
+        } catch (error) {
+          seen.errors.push(`${node.type.name || 'anonymous'}: ${error && error.message}\n${error && error.stack}`);
+          return;
+        }
+        walk(rendered, seen);
+        return;
+      }
+      walk(node.props?.children, seen);
+    }
+
+    const STATUS = {
+      ok: true, isRepo: true, root: '/tmp/repo', branch: 'main', detached: false,
+      upstream: 'origin/main', ahead: 1, behind: 0, operation: 'merge',
+      staged: [{ path: 'a.js', status: 'modified', lines: { additions: 2, deletions: 1 } }],
+      unstaged: [{ path: 'b.js', status: 'deleted', lines: { additions: 0, deletions: 4 } }],
+      untracked: ['c.js'], conflicted: [{ path: 'd.js', status: 'unmerged' }], clean: false,
+      identityConfigured: true, userName: 'u', userEmail: 'e', untrackedLines: { 'c.js': 3 },
+    };
+    const COMMIT = {
+      hash: 'abcdef1234567890', shortHash: 'abcdef1', parents: [], subject: 'feat: x',
+      author: 'u', date: '2026-10-12T00:00:00Z', refs: ['main', 'v1.0.0'],
+    };
+    const ROWS = [{ kind: 'hunk', text: '@@ -1 +1 @@' }, { kind: 'add', newNo: 1, text: 'x' }, { kind: 'del', oldNo: 1, text: 'y' }, { kind: 'context', oldNo: 2, newNo: 2, text: 'z', inline: ['a', 'b', 'c'] }, { kind: 'meta', text: 'mode changed' }];
+
+    /** index: name, from the useState order in the source. */
+    const base = {
+      0: STATUS,
+      11: { userName: '', userName: 'u', userEmail: 'e', scope: 'local' },
+      13: [{ name: 'main', current: true, upstream: 'origin/main', track: '' }, { name: 'side', current: false, upstream: '', track: '' }],
+      14: true,
+      17: { writable: true, entryId: 'dsh-git', values: {} },
+      18: { messageLanguage: 'auto', messageStyle: 'conventional', messageTemplate: 't', signoff: false, defaultBranch: 'main' },
+      19: { ok: true, exists: true, current: 'node_modules/\n', groups: [{ id: 'node', label: 'Node', detected: true, entries: [], missing: 2 }], suggested: ['node'] },
+      20: false,
+      21: { ok: true, head: COMMIT.hash, branch: 'main', graph: { laneCount: 2, rows: [{ lane: 0, before: [], after: [0, 1], parentLanes: [0, 1] }] }, commits: [COMMIT] },
+      22: COMMIT.hash,
+      23: { [COMMIT.hash]: { ok: true, body: 'why', message: 'feat: x', files: [{ path: 'a.js', additions: 2, deletions: 1 }] } },
+      24: { hash: COMMIT.hash, mode: 'hard' },
+      25: COMMIT.hash,
+      26: 'v1.0.0',
+      28: { ok: true, findings: [{ path: 'a.js', line: 3, severity: 'bug', what: 'w', fix: 'f' }], dropped: 1 },
+      29: { ok: true, complete: true, groups: [{ message: 'feat: a', paths: ['a.js'], why: 'one thing' }] },
+      30: { hash: COMMIT.hash, path: 'a.js' },
+      31: { ok: true, rows: ROWS, flags: [], files: [] },
+      32: [{ ref: 'stash@{0}', subject: 'wip', when: 'now' }],
+      33: true,
+      34: 120,
+    };
+        const repoStatus = {
+          ok: true, isRepo: true, root: '/tmp/repo', branch: 'main', detached: false,
+          upstream: 'origin/main', ahead: 1, behind: 0, operation: 'merge',
+          staged: [{ path: 'a.js', status: 'modified', lines: { additions: 2, deletions: 1 } }],
+          unstaged: [{ path: 'b.js', status: 'deleted', lines: { additions: 0, deletions: 4 } }],
+          untracked: ['c.js'], conflicted: [{ path: 'd.js', status: 'unmerged' }], clean: false,
+          identityConfigured: true, userName: 'u', userEmail: 'e', untrackedLines: { 'c.js': 3 },
+        };
+        const oneCommit = {
+          hash: 'abcdef1234567890', shortHash: 'abcdef1', parents: [], subject: 'feat: x',
+          author: 'u', date: '2026-10-12T00:00:00Z', refs: ['main', 'v1.0.0'],
+        };
+        const patchRows = [
+          { kind: 'hunk', text: '@@ -1 +1 @@' },
+          { kind: 'add', newNo: 1, text: 'x' },
+          { kind: 'del', oldNo: 1, text: 'y' },
+          { kind: 'context', oldNo: 2, newNo: 2, text: 'z', inline: ['a', 'b', 'c'] },
+          { kind: 'meta', text: 'mode changed' },
+        ];
+        /** State slots are addressed by their index in the panel's own useState order. */
+        const filled = {
+          0: repoStatus,
+          11: { userName: 'u', userEmail: 'e', scope: 'local' },
+          13: [{ name: 'main', current: true, upstream: 'origin/main', track: '' }],
+          14: true,
+          17: { writable: true, entryId: 'dsh-git', values: {} },
+          18: { messageLanguage: 'auto', messageStyle: 'conventional', messageTemplate: 't', signoff: false, defaultBranch: 'main' },
+          19: { ok: true, exists: true, current: 'node_modules/\n', groups: [{ id: 'node', label: 'Node', detected: true, entries: [], missing: 2 }], suggested: ['node'] },
+          21: { ok: true, head: oneCommit.hash, branch: 'main', graph: { laneCount: 2, rows: [{ lane: 0, before: [], after: [0, 1], parentLanes: [0, 1] }] }, commits: [oneCommit] },
+          22: oneCommit.hash,
+          23: { [oneCommit.hash]: { ok: true, body: 'why', message: 'feat: x', files: [{ path: 'a.js', additions: 2, deletions: 1 }] } },
+          24: { hash: oneCommit.hash, mode: 'hard' },
+          25: oneCommit.hash,
+          26: 'v1.0.0',
+          27: { ok: true, findings: [{ path: 'a.js', line: 3, severity: 'bug', what: 'w', fix: 'f' }], dropped: 1 },
+          29: { ok: true, complete: true, groups: [{ message: 'feat: a', paths: ['a.js'], why: 'one thing' }] },
+          30: { hash: oneCommit.hash, path: 'a.js' },
+          31: { ok: true, rows: patchRows, flags: [], files: [] },
+          32: [{ ref: 'stash@{0}', subject: 'wip', when: 'now' }],
+          33: true,
+          34: 120,
+        };
+        const scenarios = [
+          ['a fresh mount', {}],
+          ['no repository', { 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' } }],
+          ['a failed status read', { 0: { ok: false, isRepo: false, error: 'git is not installed' } }],
+          ['a clean tree', { 0: { ...repoStatus, clean: true, staged: [], unstaged: [], untracked: [], conflicted: [], operation: '', ahead: 0 } }],
+          ['a detached HEAD', { 0: { ...repoStatus, detached: true, branch: '', upstream: '', operation: '' }, 13: [] }],
+          ['a missing identity', { 0: { ...repoStatus, identityConfigured: false }, 11: { userName: '', userEmail: '', scope: 'local' } }],
+          ['the changes view', { ...filled, 12: 'changes' }],
+          ['the settings view', { ...filled, 12: 'settings' }],
+          ['the history view', { ...filled, 12: 'history' }],
+          ['the review in place of the list', { ...filled, 12: 'changes' }],
+          ['the split in place of the list', { ...filled, 12: 'changes', 27: null }],
+        ];
+
+        const failures = [];
+        const rendered = new Set();
+        for (const [label, patch] of scenarios) {
+          stateOrder.length = 0;
+          effectErrors.length = 0;
+          overrides = patch;
+          const seen = { count: 0, errors: [], names: new Set() };
+          walk(React.createElement(Panel, { sessionId: 's', usePanelInfo: () => ({ activePanelId: null }) }), seen);
+          for (const name of seen.names) rendered.add(name);
+          const bad = [...seen.errors, ...effectErrors.filter(Boolean)];
+          if (bad.length > 0) failures.push(`${label}: ${bad[0].split('\n')[0]}`);
+        }
+
+        check('no view throws while rendering', failures.length === 0, failures);
+        // A render that stops early reports no throw either, so the parts that only
+        // appear deeper in the tree are named. FileRow is where a tooltip helper that
+        // lived in the panel went missing: the slot caught the throw, retired the tab,
+        // and left an empty pane behind.
+        check('the file rows render', rendered.has('FileRow'), [...rendered].sort());
+        check('the diff renderer renders', rendered.has('DiffBody'), [...rendered].sort());
+        check('the commit graph renders', rendered.has('GraphCell') || rendered.has('GraphRow'), [...rendered].sort());
+      }
+
+
   section('the panel never reads a binding before it exists');
   // A `const` in the panel body sits in its temporal dead zone until the line
   // that declares it, and two positions are evaluated *during* the render: a
