@@ -74,7 +74,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 ## Development
 
 ```sh
-node test/smoke.mjs     # 521 assertions; runs real git, no DSH required
+node test/smoke.mjs     # 528 assertions; runs real git, no DSH required
 ```
 
 ```

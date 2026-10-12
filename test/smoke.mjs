@@ -636,6 +636,64 @@ try {
   check('and says what to do', localizedOverwrite.includes('提交或贮藏'), localizedOverwrite);
   check('and is not glued to stdout', !localizedOverwrite.includes('On branch'), localizedOverwrite);
 
+  section('a failing request leaves a trace');
+  check(
+    'the route logs a failed endpoint before answering',
+    /catch \(error\) \{[\s\S]{0,400}?logger\?\.error\?\.\([\s\S]{0,200}?return json\(failure\('internal'/.test(
+      readFileSync(new URL('../lib/rpc.js', import.meta.url), 'utf8'),
+    ),
+    'the route answers 500 without logging',
+  );
+  check(
+    'and the host revision covers every implementation file',
+    ['impl.js', 'git-core.js', 'messages.js', 'review.js', 'rpc.js', 'text.js'].every((file) =>
+      readFileSync(new URL('../lib/plugin.js', import.meta.url), 'utf8').includes(`'${file}'`),
+    ),
+    'a file is missing from IMPLEMENTATION, so editing it would not reload the Host half',
+  );
+
+  section('a shell that cannot start is a message, not a 500');
+  // The service contract lets `execute` and `result` reject. On Windows a panel
+  // opened on a folder whose path the shell cannot use got an HTTP 500 out of it,
+  // and the body's reason never reached the screen.
+  const deadShell = createGitCore({
+    exec: async () => {
+      throw new Error('spawn git ENOENT');
+    },
+    config: { commandTimeoutMs: 5000 },
+  });
+  const deadStatus = await deadShell.status({ cwd: toolRepo });
+  check('the read answers instead of throwing', deadStatus.ok === true && deadStatus.isRepo === false, deadStatus);
+  check('and says git could not be run', String(deadStatus.reason).includes('could not run git'), deadStatus.reason);
+  const deadInit = await deadShell.init({ cwd: toolRepo });
+  check('and so does a write', deadInit.ok === false && String(deadInit.error).includes('could not run git'), deadInit);
+  const deadLog = await deadShell.log({ cwd: toolRepo, limit: 5 });
+  check('and a read that parses output', deadLog.ok === false && String(deadLog.error).includes('could not run git'), deadLog);
+
+  // The panel's own transport must carry that reason through rather than
+  // replacing it with the status code.
+  const transportSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
+  const notOkAt = transportSource.indexOf('if (!response.ok) {');
+  let notOkBlock = '';
+  if (notOkAt !== -1) {
+    let depth = 0;
+    for (let at = transportSource.indexOf('{', notOkAt); at < transportSource.length; at += 1) {
+      if (transportSource[at] === '{') depth += 1;
+      else if (transportSource[at] === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          notOkBlock = transportSource.slice(notOkAt, at + 1);
+          break;
+        }
+      }
+    }
+  }
+  check(
+    'the panel reads the reason out of a failed response',
+    notOkBlock.includes('response.text()') && notOkBlock.includes('endpoint') && notOkBlock.includes('answered HTTP'),
+    notOkBlock.slice(0, 120) || 'no non-ok branch found',
+  );
+
   section('the git invocation works under a Windows shell too');
   // Windows gets the Harness's PowerShell executor, where `VAR=value git …` is
   // not a command at all: it fails as an unknown term. The environment has to be
