@@ -68,6 +68,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 - **Nothing destructive happens on a single click.** Discarding, deleting a branch, dropping a stash, rebasing, and rewinding all ask first, and say what will be lost.
 - **Rewinding and reverting are separate**, because they are: rewinding moves the branch and rewrites history, reverting adds an inverse commit and is safe for anything already pushed. The panel warns before a rewind that would rewrite published history.
 - **"Undo this commit" and "rewind to here" are separate too.** On the newest commit the button undoes that commit and leaves its changes staged, unstaged, or deleted as you choose; on an older commit it moves the branch pointer back to that commit. The notice names the commit that was actually undone and always states how many were discarded — including none.
+- **Every tool call runs git under the calling session's permission mode**, with the deployment default only as a fallback. The panel's route has no session, so it passes no policy at all and leaves the choice to the Host.
 - **"git could not be run" and "this is not a repository" are different failures**, and the panel says which: the first gives the reason and a retry instead of inviting you to `git init` a repository that exists and merely cannot be read. An environment problem such as a sandbox that will not start is explained in one sentence, with the original cause kept.
 - **Model output is treated as untrusted input.** A review finding that names a file which is not staged is dropped; a split plan that does not cover every staged file is flagged; an answer that does not parse is shown as-is rather than reported as "nothing found".
 - **Nothing is committed, pushed, or repaired automatically.** The AI features produce material for a decision, not the decision.
@@ -75,7 +76,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 ## Development
 
 ```sh
-node test/smoke.mjs     # 534 assertions; runs real git, no DSH required
+node test/smoke.mjs     # 544 assertions; runs real git, no DSH required
 ```
 
 ```

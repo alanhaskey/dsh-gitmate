@@ -159,7 +159,6 @@ let lastShellRequest = null;
 
 /** A minimal stand-in for `ctx.shell`, backed by a real bash process. */
 function childProcessExec({ command, cwd, stdin, timeoutMs, env }) {
-  lastShellRequest = { command, cwd, env };
   return new Promise((settle) => {
     const child = execFile(
       '/bin/bash',
@@ -407,6 +406,20 @@ try {
   section('tool registration and schema subset');
   const registered = [];
   const toolRepo = join(sandbox, 'tool-repo');
+  /** Sessions that chose a mode, and the policy the Host resolves for them. */
+  const sessionModes = { 'session-loose': 'danger-full-access', 'session-panel': 'workspace-write' };
+  const resolvedPolicies = [];
+  const sandboxPolicy = {
+    resolve: (request = {}) => {
+      const session = request.session;
+      const policy = {
+        mode: session === undefined ? 'workspace-write' : (sessionModes[session.id] ?? 'workspace-write'),
+        ...(session === undefined ? {} : { sessionId: session.id }),
+      };
+      resolvedPolicies.push(policy);
+      return policy;
+    },
+  };
   const sessionCwds = { 'session-panel': toolRepo };
   const panel = { route: null };
   const configWrites = [];
@@ -423,7 +436,10 @@ try {
       },
     },
     shell: {
-      resolve: (request) => request,
+      resolve: (request) => {
+        lastShellRequest = request;
+        return request;
+      },
       execute: async (spec) => ({
         result: async () => {
           const outcome = await childProcessExec({
@@ -444,6 +460,7 @@ try {
       }),
     },
     get: (name) => {
+      if (name === 'sandboxPolicy') return sandboxPolicy;
       if (name === 'sessions') {
         return {
           get: (id) => (Object.hasOwn(sessionCwds, id) ? { header: { cwd: sessionCwds[id] } } : undefined),
@@ -687,6 +704,68 @@ try {
     ),
     'a file is missing from IMPLEMENTATION, so editing it would not reload the Host half',
   );
+
+  section("a tool call carries the caller's sandbox policy");
+  // The deployment default is `workspace-write`. A session that switched itself to
+  // danger-full-access was still executed under the default, whose Windows ACL
+  // runner could not start, so every git command failed while the panel blamed
+  // the repository. The policy has to come from the call.
+  const statusTool = registered.find((tool) => tool.name === 'git_status');
+  check('git_status is registered', statusTool !== undefined);
+
+  resolvedPolicies.length = 0;
+  await statusTool.execute({ cwd: toolRepo }, { agent: { session: { id: 'session-loose' } } });
+  check(
+    'the session mode reaches the shell request',
+    lastShellRequest.sandboxPolicy?.mode === 'danger-full-access',
+    lastShellRequest.sandboxPolicy,
+  );
+  check(
+    'and it was resolved from that session',
+    resolvedPolicies.some((policy) => policy.sessionId === 'session-loose'),
+    resolvedPolicies,
+  );
+
+  resolvedPolicies.length = 0;
+  await statusTool.execute({ cwd: toolRepo }, { agent: { session: { id: 'session-panel' } } });
+  check(
+    'a session on the default still resolves through its own session',
+    lastShellRequest.sandboxPolicy?.mode === 'workspace-write' &&
+      lastShellRequest.sandboxPolicy?.sessionId === 'session-panel',
+    lastShellRequest.sandboxPolicy,
+  );
+
+  // The panel's route has no session, so it keeps the deployment default — and
+  // that has to stay byte-for-byte what it was.
+  resolvedPolicies.length = 0;
+  await statusTool.execute({ cwd: toolRepo }, undefined);
+  check('the panel path sends no policy at all', lastShellRequest.sandboxPolicy === undefined, lastShellRequest.sandboxPolicy);
+  check('and asks the service for nothing', resolvedPolicies.length === 0, resolvedPolicies);
+
+  // A dry profile serves no policy service: the tools must still work.
+  const withService = fakeCtx.get;
+  fakeCtx.get = (name) => (name === 'sandboxPolicy' ? undefined : withService(name));
+  await statusTool.execute({ cwd: toolRepo }, { agent: { session: { id: 'session-loose' } } });
+  fakeCtx.get = withService;
+  check(
+    'a profile without the service falls back instead of failing',
+    lastShellRequest.sandboxPolicy === undefined && statusTool !== undefined,
+    lastShellRequest.sandboxPolicy,
+  );
+
+  // A backend that cannot start is an environment fault, not a repository fault.
+  const realExecute = fakeCtx.shell.execute;
+  fakeCtx.shell.execute = async () => {
+    throw new Error(
+      'sandbox mode "workspace-write" is requested but no sandbox backend is usable on this host; refusing to run the command unconfined. ' +
+        "Runner failure: windows-acl-run: EPERM: operation not permitted, mkdtemp 'C:\\Users\\x\\AppData\\Local\\Temp\\dsh-XXXXXX'",
+    );
+  };
+  const refusedCall = await statusTool.execute({ cwd: toolRepo }, { agent: { session: { id: 'session-loose' } } });
+  fakeCtx.shell.execute = realExecute;
+  check('a runner failure is reported, not thrown', refusedCall.ok === true && refusedCall.isRepo === false, refusedCall);
+  check('as an unavailable git rather than an empty folder', refusedCall.unavailable === true, refusedCall.unavailable);
+  check('with the environment named in the reason', /windows-acl-run|sandbox/i.test(String(refusedCall.reason)), refusedCall.reason);
 
   section('a shell that cannot start is a message, not a 500');
   // The service contract lets `execute` and `result` reject. On Windows a panel
