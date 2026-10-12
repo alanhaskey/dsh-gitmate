@@ -488,6 +488,7 @@ try {
     'git_log',
     'git_reset',
     'git_stage',
+    'git_stash',
     'git_status',
     'git_sync',
   ];
@@ -1066,6 +1067,92 @@ try {
   check('hard undo keeps the tree clean', hardUndo.ok === true && hardUndo.unstaged === 0 && hardUndo.staged === 0, hardUndo);
   check('hard undo discarded the edit', (await core.diff({ cwd: undoRepo, scope: 'unstaged' })).patch.trim() === '');
   check('the published flag is false without an upstream', hardUndo.published === false, hardUndo);
+
+  section('merge and stash');
+  const workRepo = join(sandbox, 'merge-repo');
+  await core.init({ cwd: workRepo });
+  for (const [key, value] of [['user.name', 'Merge User'], ['user.email', 'merge@example.com']]) {
+    await core.config({ cwd: workRepo, action: 'set', key, value });
+  }
+  writeFileSync(join(workRepo, 'base.txt'), 'base\n');
+  await core.commit({ cwd: workRepo, all: true, message: 'chore: base' });
+
+  // a side branch that only adds commits: merging it can fast-forward
+  await core.branch({ cwd: workRepo, action: 'create', name: 'feature' });
+  writeFileSync(join(workRepo, 'feature.txt'), 'feature\n');
+  await core.commit({ cwd: workRepo, all: true, message: 'feat: on the branch' });
+  await core.branch({ cwd: workRepo, action: 'switch', name: 'main' });
+
+  const refusedCurrent = await core.merge({ cwd: workRepo, branch: 'main' });
+  check('refuses to merge the checked-out branch into itself', refusedCurrent.ok === false, refusedCurrent);
+  const refusedMissing = await core.merge({ cwd: workRepo, branch: 'nope' });
+  check('refuses a branch that does not exist', refusedMissing.ok === false, refusedMissing);
+
+  const fastForwarded = await core.merge({ cwd: workRepo, branch: 'feature' });
+  check('fast-forwards when the branch is ahead', fastForwarded.ok === true && fastForwarded.fastForward === true, fastForwarded);
+  check('and the file arrives', existsSync(join(workRepo, 'feature.txt')), fastForwarded);
+  const upToDate = await core.merge({ cwd: workRepo, branch: 'feature' });
+  check('merging again is a no-op', upToDate.ok === true && upToDate.upToDate === true, upToDate);
+
+  // a real merge commit, from two branches that both moved
+  await core.branch({ cwd: workRepo, action: 'create', name: 'side' });
+  writeFileSync(join(workRepo, 'side.txt'), 'side\n');
+  await core.commit({ cwd: workRepo, all: true, message: 'feat: side work' });
+  await core.branch({ cwd: workRepo, action: 'switch', name: 'main' });
+  writeFileSync(join(workRepo, 'main.txt'), 'main\n');
+  await core.commit({ cwd: workRepo, all: true, message: 'feat: main work' });
+  const mergeCommit = await core.merge({ cwd: workRepo, branch: 'side', noFf: true });
+  check('creates a merge commit when asked', mergeCommit.ok === true && mergeCommit.fastForward === false, mergeCommit);
+  check('both sides are present', existsSync(join(workRepo, 'side.txt')) && existsSync(join(workRepo, 'main.txt')), mergeCommit);
+
+  // a conflict is a state to report, not a crash
+  await core.branch({ cwd: workRepo, action: 'create', name: 'clash' });
+  writeFileSync(join(workRepo, 'shared.txt'), 'from clash\n');
+  await core.commit({ cwd: workRepo, all: true, message: 'feat: clash side' });
+  await core.branch({ cwd: workRepo, action: 'switch', name: 'main' });
+  writeFileSync(join(workRepo, 'shared.txt'), 'from main\n');
+  await core.commit({ cwd: workRepo, all: true, message: 'feat: main side' });
+
+  const conflicted = await core.merge({ cwd: workRepo, branch: 'clash' });
+  check('a conflicted merge reports itself as such', conflicted.ok === false && conflicted.conflicted === true, conflicted);
+  check('naming the file that needs a decision', conflicted.conflicts?.includes('shared.txt'), conflicted.conflicts);
+  check('and the message says what to do', /resolve them and commit, or abort/.test(conflicted.error ?? ''), conflicted.error);
+  check('the working tree is mid-merge', existsSync(join(workRepo, '.git', 'MERGE_HEAD')), 'no MERGE_HEAD');
+  check(
+    'and the conflict shows up in status',
+    (await core.status({ cwd: workRepo })).conflicted.some((entry) => entry.path === 'shared.txt'),
+    (await core.status({ cwd: workRepo })).conflicted,
+  );
+
+  const aborted = await core.merge({ cwd: workRepo, abort: true });
+  check('aborting the merge succeeds', aborted.ok === true && aborted.action === 'abort', aborted);
+  check('leaving no merge in progress', !existsSync(join(workRepo, '.git', 'MERGE_HEAD')), 'MERGE_HEAD survived');
+  check('and the file back on this branch', readFileSync(join(workRepo, 'shared.txt'), 'utf8') === 'from main\n', readFileSync(join(workRepo, 'shared.txt'), 'utf8'));
+
+  // stash: set work aside without committing it
+  const emptyStash = await core.stash({ cwd: workRepo, action: 'list' });
+  check('the stash starts empty', emptyStash.ok === true && emptyStash.stashes.length === 0, emptyStash);
+  const nothingToStash = await core.stash({ cwd: workRepo, action: 'push' });
+  check('pushing a clean tree says there is nothing to stash', nothingToStash.ok === true && nothingToStash.nothingToStash === true, nothingToStash);
+
+  writeFileSync(join(workRepo, 'shared.txt'), 'work in progress\n');
+  const stashedOnce = await core.stash({ cwd: workRepo, action: 'push', message: 'wip: half done' });
+  check('stashing takes the change away', stashedOnce.ok === true && readFileSync(join(workRepo, 'shared.txt'), 'utf8') === 'from main\n', stashedOnce);
+  check('and records a labelled stash', stashedOnce.stashes.length === 1 && /half done/.test(stashedOnce.stashes[0].subject), stashedOnce.stashes);
+  check('leaving the tree clean', (await core.status({ cwd: workRepo })).clean === true, (await core.status({ cwd: workRepo })).clean);
+
+  const applied = await core.stash({ cwd: workRepo, action: 'apply' });
+  check('applying brings the change back', readFileSync(join(workRepo, 'shared.txt'), 'utf8') === 'work in progress\n', applied);
+  check('and keeps the stash', applied.stashes.length === 1, applied.stashes);
+
+  await core.stash({ cwd: workRepo, action: 'push', message: 'wip: again' });
+  check('a second stash stacks on the first', (await core.stash({ cwd: workRepo, action: 'list' })).stashes.length === 2);
+  const popped = await core.stash({ cwd: workRepo, action: 'pop' });
+  check('popping restores the newest', popped.ok === true && readFileSync(join(workRepo, 'shared.txt'), 'utf8') === 'work in progress\n', popped);
+  check('and drops it', popped.stashes.length === 1, popped.stashes);
+  const dropped = await core.stash({ cwd: workRepo, action: 'drop' });
+  check('dropping empties the stash', dropped.ok === true && dropped.stashes.length === 0, dropped);
+  check('and an empty stash refuses further work', (await core.stash({ cwd: workRepo, action: 'pop' })).ok === false);
 
   section('sync reconciles both directions');
   const originRepo = join(sandbox, 'sync-origin');
