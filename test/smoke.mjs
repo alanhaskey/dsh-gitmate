@@ -636,6 +636,42 @@ try {
   check('and says what to do', localizedOverwrite.includes('提交或贮藏'), localizedOverwrite);
   check('and is not glued to stdout', !localizedOverwrite.includes('On branch'), localizedOverwrite);
 
+  section('a sandbox refusal is not an empty folder');
+  // A probe fails either because this is not a repository or because git never
+  // ran. The panel offered to `git init` for both, which is useless advice when
+  // the machine cannot start a sandbox.
+  const refusal =
+    'could not run git here: sandbox mode "workspace-write" is requested but no sandbox backend is usable on this host; ' +
+    'refusing to run the command unconfined. Runner failure: windows-acl-run: EPERM: operation not permitted, mkdtemp ' +
+    "'C:\\Users\\someone\\AppData\\Local\\Temp\\dsh-XXXXXX'";
+  const noSandboxCore = createGitCore({
+    exec: async () => ({ code: 1, stdout: '', stderr: refusal, timedOut: false, aborted: false, denied: true }),
+    config: { commandTimeoutMs: 5000 },
+  });
+  const noSandbox = await noSandboxCore.status({ cwd: toolRepo });
+  check('the probe reports git as unavailable', noSandbox.ok === true && noSandbox.unavailable === true, noSandbox);
+  check('and keeps the reason', String(noSandbox.reason).includes('sandbox'), noSandbox.reason);
+
+  const ordinaryCore = createGitCore({
+    exec: async () => ({ code: 128, stdout: '', stderr: 'fatal: not a git repository (or any of the parent directories): .git', timedOut: false, aborted: false, denied: false }),
+    config: { commandTimeoutMs: 5000 },
+  });
+  const ordinary = await ordinaryCore.status({ cwd: toolRepo });
+  check('an ordinary folder is not flagged as unavailable', ordinary.unavailable === undefined, ordinary);
+
+  // The raw text reads like a repository fault; it is not one, and saying so is
+  // the difference between a user fixing their machine and blaming their project.
+  const refusalText = hostText().message(refusal);
+  check('the refusal is explained as an environment problem', refusalText.includes('环境问题'), refusalText.slice(0, 80));
+  check('and keeps the reported cause', refusalText.includes('mkdtemp'), refusalText.slice(-60));
+  // English is left exactly as the Host wrote it: there is nothing to translate,
+  // and rewriting an English message for an English reader would only lose detail.
+  check(
+    'and English keeps the Host wording untouched',
+    hostText('en').message(refusal) === refusal,
+    hostText('en').message(refusal).slice(0, 80),
+  );
+
   section('a failing request leaves a trace');
   check(
     'the route logs a failed endpoint before answering',
