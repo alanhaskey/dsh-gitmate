@@ -21,6 +21,7 @@ Restart DSH once, refresh the page, then open **GitMate** from the sidebar's **+
 - **One row of list actions**, shown only when they would do something, with the counts in the labels.
 - **Amend** — fold the staged changes into the previous commit; leaving the message box empty keeps the existing message.
 - **A draggable splitter** between the list and the commit card resizes the message box.
+- **A panel that is working says so** — every operation shows a turning indicator and names itself ("Committing…", "Reviewing the staged changes…") instead of only greying its buttons out.
 
 ## AI features
 
@@ -28,7 +29,7 @@ Restart DSH once, refresh the page, then open **GitMate** from the sidebar's **+
 | --- | --- |
 | **Commit message** | Generated from the staged diff. If you have already typed something, the button becomes *Refine draft*: the model keeps your intent and fills in the rest instead of replacing it. |
 | **Review before commit** | Reads the staged changes and reports only what would bite — a wrong result, a missed edge case, an unhandled error, a committed secret, debug output left in, a behaviour change with no test. Click a finding to open that file's diff. |
-| **Split this commit** | Divides the staged changes into commits that each stand on their own, with a message for each. Commit one group; the rest stay staged and the plan is redrawn. |
+| **Split this commit** | Divides the staged changes into commits that each stand on their own, with a message for each. The plan is a draft you can edit: rewrite any message, merge a group into the one above, remove one, ask for a new plan, commit one group at a time, or commit them all in order. Each commit leaves the other files staged. |
 | **Explain a change** | Two to five bullets on what a file's change does, so you can review without reading every line. |
 | **`.gitignore`** | Infers the rules from the project's manifests and layout. One button creates it, one adds what is missing. |
 

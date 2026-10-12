@@ -925,9 +925,21 @@ try {
       const text = stripDeferred(code.slice(decl.line - 1, end).join('\n'));
       for (const [name, line] of declaredAt) {
         if (name === decl.name || line <= decl.line) continue;
-        if (new RegExp(`(^|[^\\w$.])${name}\\b`).test(text)) {
-          problems.push(`eager: ${decl.name} (line ${decl.line}) reads ${name} declared at line ${line}`);
+        const pattern = new RegExp(`(^|[^\\w$.])${name}\\b`, 'g');
+        let match = pattern.exec(text);
+        let read = false;
+        while (match !== null) {
+          const at = match.index + match[1].length;
+          const before = text.slice(0, at).replace(/\s+$/, '').slice(-1);
+          // `{ commit: … }` is an object key, not a read of a binding named commit.
+          const isKey = /^\s*:/.test(text.slice(at + name.length)) && (before === '{' || before === ',');
+          if (!isKey) {
+            read = true;
+            break;
+          }
+          match = pattern.exec(text);
         }
+        if (read) problems.push(`eager: ${decl.name} (line ${decl.line}) reads ${name} declared at line ${line}`);
       }
     }
     code.forEach((line, index) => {
@@ -955,6 +967,22 @@ try {
     'panel controls do not rely on the native title attribute',
     strayTitles.every((value) => value.startsWith('option.title') || value.startsWith('() =>')),
     strayTitles,
+  );
+  // Every operation takes the whole panel out of service while it runs, so a
+  // silent panel reads as a frozen one: each of them has to name itself.
+  const busyKinds = new Set([
+    ...[...panelSource.matchAll(/act\('([a-zA-Z]+)'/g)].map((match) => match[1]),
+    ...[...panelSource.matchAll(/setBusy\('([a-zA-Z]+)'\)/g)].map((match) => match[1]),
+  ]);
+  const busyLabelled = new Set([...panelSource.matchAll(/^\s+([a-zA-Z]+): t\('busy/gm)].map((match) => match[1]));
+  check(
+    'every operation that blocks the panel says what it is doing',
+    [...busyKinds].filter((kind) => !busyLabelled.has(kind)).length === 0,
+    [...busyKinds].filter((kind) => !busyLabelled.has(kind)),
+  );
+  check(
+    'and the wait is visible rather than only disabling controls',
+    panelSource.includes("className: 'dsg-running'") && panelSource.includes('dsg-spin'),
   );
   check(
     'the model-backed controls carry an AI mark',
