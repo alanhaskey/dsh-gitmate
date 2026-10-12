@@ -23,6 +23,7 @@ import {
   resolveRoute,
   suggestIgnorePatterns,
 } from '../lib/messages.js';
+import { createHostText as hostText, MESSAGES as HOST_MESSAGES } from '../lib/text.js';
 import * as plugin from '../lib/plugin.js';
 
 /**
@@ -577,6 +578,50 @@ try {
 
   const blanketDiscard = await runTool('git_stage', { cwd: toolRepo, action: 'discard' });
   check('git_stage refuses a blanket discard', blanketDiscard.value.ok === false && blanketDiscard.text.startsWith('error:'), blanketDiscard.text);
+
+  section('messages a person reads follow the language setting');
+  const zhText = hostText();
+  const enText = hostText('en');
+  check('an unset or auto setting reads in Chinese', zhText.language === 'zh', zhText.language);
+  check('explicit English reads in English', enText.language === 'en', enText.language);
+  check('an unknown language falls back to Chinese', hostText('klingon').language === 'zh');
+
+  // Every entry must survive the round trip: its own English text, translated,
+  // must come back as its Chinese text with the same values in place.
+  const roundTrip = [];
+  for (const [key, entry] of Object.entries(HOST_MESSAGES)) {
+    const sample = entry.en.replace(/\{(\w+)\}/g, (_, name) => `<${name}>`);
+    const expected = entry.zh.replace(/\{(\w+)\}/g, (_, name) => `<${name}>`);
+    const actual = zhText.message(sample);
+    if (actual !== expected) roundTrip.push({ key, sample, expected, actual });
+  }
+  check('every message translates by its own shape', roundTrip.length === 0, roundTrip);
+
+  check('a plugin message translates', zhText.message('no commit matches HEAD~1') === '找不到匹配 HEAD~1 的提交', zhText.message('no commit matches HEAD~1'));
+  check(
+    'a plugin prefix keeps git\'s words after it',
+    zhText.message('not a git repository: fatal: not a git repository (or any of the parent directories): .git') ===
+      '这里不是 git 仓库：当前目录及其父目录都不是 git 仓库',
+    zhText.message('not a git repository: fatal: not a git repository (or any of the parent directories): .git'),
+  );
+  check(
+    'a rejected push explains itself in Chinese',
+    zhText.message('! [rejected]        main -> main (fetch first)') === '推送被拒绝：main → main（远程有本地没有的提交）',
+    zhText.message('! [rejected]        main -> main (fetch first)'),
+  );
+  check('English is left exactly as it was', enText.message('no commit matches HEAD~1') === 'no commit matches HEAD~1');
+  // A miss must stay readable rather than half-translated.
+  const unknown = 'a sentence this plugin never wrote';
+  check('an unknown sentence is passed through untouched', zhText.message(unknown) === unknown, zhText.message(unknown));
+
+  // The message the user actually met: git names the files, and stdout must not
+  // be glued onto the end of it.
+  const overwrite =
+    'error: Your local changes to the following files would be overwritten by merge:\n\tf.txt\nPlease commit your changes or stash them before you merge.\nAborting\n';
+  const localizedOverwrite = zhText.message(overwrite.trim().split('\n').map((line) => line.trim()).filter(Boolean).join(' '));
+  check('the overwrite warning names the files', localizedOverwrite.includes('f.txt'), localizedOverwrite);
+  check('and says what to do', localizedOverwrite.includes('提交或贮藏'), localizedOverwrite);
+  check('and is not glued to stdout', !localizedOverwrite.includes('On branch'), localizedOverwrite);
 
   section('the panel never reads a binding before it exists');
   // A `const` in the panel body sits in its temporal dead zone until the line
