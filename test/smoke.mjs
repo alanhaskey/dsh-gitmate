@@ -134,6 +134,16 @@ mkdirSync(fakeHome, { recursive: true });
  * An isolated environment: a private HOME and no system config, so the machine's
  * real git identity and defaults cannot decide the outcome of a check.
  */
+/** Run git directly, for the few setup steps no operation covers. */
+function gitIn(cwd, ...args) {
+  return new Promise((settle, fail) => {
+    execFile('git', args, { cwd, maxBuffer: 16 * 1024 * 1024, env: TEST_ENV }, (error, stdout, stderr) => {
+      if (error) fail(new Error(`${args.join(' ')}: ${stderr || error.message}`));
+      else settle(stdout);
+    });
+  });
+}
+
 const TEST_ENV = {
   ...process.env,
   HOME: fakeHome,
@@ -1056,6 +1066,83 @@ try {
   check('hard undo keeps the tree clean', hardUndo.ok === true && hardUndo.unstaged === 0 && hardUndo.staged === 0, hardUndo);
   check('hard undo discarded the edit', (await core.diff({ cwd: undoRepo, scope: 'unstaged' })).patch.trim() === '');
   check('the published flag is false without an upstream', hardUndo.published === false, hardUndo);
+
+  section('sync reconciles both directions');
+  const originRepo = join(sandbox, 'sync-origin');
+  const seedRepo = join(sandbox, 'sync-seed');
+  const cloneRepo = join(sandbox, 'sync-clone');
+
+  // A bare remote, the way a real one behaves: pushing into a non-bare
+  // repository that has the branch checked out is refused by git, so a fixture
+  // built from a working copy would only ever test the rejection path.
+  await gitIn(sandbox, '-c', 'init.defaultBranch=main', 'init', '--bare', originRepo);
+  await gitIn(sandbox, '-c', 'init.defaultBranch=main', 'clone', '--quiet', originRepo, seedRepo);
+  for (const repo of [seedRepo, cloneRepo]) {
+    await core.config({ cwd: repo, action: 'set', key: 'user.name', value: 'Sync User' });
+    await core.config({ cwd: repo, action: 'set', key: 'user.email', value: 'sync@example.com' });
+  }
+  writeFileSync(join(seedRepo, 'seed.txt'), 'seed\n');
+  const seedCommit = await core.commit({ cwd: seedRepo, all: true, message: 'chore: seed' });
+  check('commits the seed into the fresh clone', seedCommit.ok === true, seedCommit);
+  const seeded = await core.sync({ cwd: seedRepo, action: 'sync' });
+  check('publishes the seed commit to the bare remote', seeded.ok === true && seeded.pushed === 1, seeded);
+
+  await gitIn(sandbox, 'clone', '--quiet', originRepo, cloneRepo);
+  await core.config({ cwd: cloneRepo, action: 'set', key: 'user.name', value: 'Sync User' });
+  await core.config({ cwd: cloneRepo, action: 'set', key: 'user.email', value: 'sync@example.com' });
+  const cloneState = await core.status({ cwd: cloneRepo });
+  check('set up a second working copy to sync against', cloneState.isRepo === true && cloneState.upstream !== '', cloneState.upstream);
+  check('the clone starts with the seed commit', existsSync(join(cloneRepo, 'seed.txt')), cloneRepo);
+
+  const quiet = await core.sync({ cwd: cloneRepo, action: 'sync' });
+  check('a branch with nothing to move reports nothing moved', quiet.ok === true && quiet.pulled === 0 && quiet.pushed === 0, quiet);
+
+  // the remote moves ahead: sync must fast-forward
+  writeFileSync(join(seedRepo, 'remote.txt'), 'from the remote\n');
+  await core.commit({ cwd: seedRepo, all: true, message: 'feat: remote work' });
+  await core.sync({ cwd: seedRepo, action: 'sync' });
+  const behind = await core.sync({ cwd: cloneRepo, action: 'sync' });
+  check('fetches and fast-forwards when behind', behind.ok === true && behind.pulled === 1, behind);
+  check('the pulled commit is on disk', existsSync(join(cloneRepo, 'remote.txt')), behind);
+  check('and nothing was pushed', behind.pushed === 0, behind);
+
+  // the clone moves ahead: sync must push
+  writeFileSync(join(cloneRepo, 'local.txt'), 'from the clone\n');
+  await core.commit({ cwd: cloneRepo, all: true, message: 'feat: local work' });
+  const ahead = await core.sync({ cwd: cloneRepo, action: 'sync' });
+  check('pushes when ahead', ahead.ok === true && ahead.pushed === 1 && ahead.pulled === 0, ahead);
+  check(
+    'the remote really has the commit',
+    (await gitIn(originRepo, 'log', '--oneline', '-n', '5')).includes('feat: local work'),
+    await gitIn(originRepo, 'log', '--oneline', '-n', '5'),
+  );
+
+  // Being ahead and behind at once is divergence, so the only way two working
+  // copies can both move is for one to be refused — which the next block covers.
+  // A working copy cannot push from a view of the remote that predates someone
+  // else's push; it fast-forwards first, as a developer would.
+  const seedCatchesUp = await core.sync({ cwd: seedRepo, action: 'sync' });
+  check('the other working copy fast-forwards what the clone pushed', seedCatchesUp.ok === true && seedCatchesUp.pulled === 1, seedCatchesUp);
+
+  // a diverged branch is reported, never merged behind the user's back
+  writeFileSync(join(seedRepo, 'conflict.txt'), 'remote version\n');
+  await core.commit({ cwd: seedRepo, all: true, message: 'feat: remote conflicting' });
+  const conflictingSeed = await core.sync({ cwd: seedRepo, action: 'sync' });
+  check('the conflicting remote commit lands', conflictingSeed.ok === true && conflictingSeed.pushed === 1, conflictingSeed);
+  writeFileSync(join(cloneRepo, 'conflict.txt'), 'local version\n');
+  await core.commit({ cwd: cloneRepo, all: true, message: 'feat: local conflicting' });
+  const diverged = await core.sync({ cwd: cloneRepo, action: 'sync' });
+  check('refuses to merge a diverged branch', diverged.ok === false && diverged.diverged === true, diverged);
+  check('and says how to proceed', /diverged/.test(diverged.error ?? ''), diverged.error);
+  check('leaving no half-finished merge behind', !existsSync(join(cloneRepo, '.git', 'MERGE_HEAD')), 'a merge was started');
+  check(
+    'the working file kept the local version',
+    readFileSync(join(cloneRepo, 'conflict.txt'), 'utf8') === 'local version\n',
+    readFileSync(join(cloneRepo, 'conflict.txt'), 'utf8'),
+  );
+
+  const fetchHere = await core.sync({ cwd: sandbox, action: 'fetch' });
+  check('fetch on a directory that is not a repository reports it rather than throwing', fetchHere.ok === false && fetchHere.isRepo === false, fetchHere);
 
   section('discard handles a path by what it actually is');
   const discardRepo = join(sandbox, 'discard-repo');
