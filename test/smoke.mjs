@@ -1266,6 +1266,92 @@ try {
   check('the draft rule forbids replacing the author\'s wording', withDraft[0].system.includes('Never replace their description'), withDraft[0].system.slice(-260));
   check('the draft reaches the model', JSON.stringify(withDraft[0].messages).includes('fix login redirect'), withDraft[0].messages);
 
+  section('an explanation that comes back empty');
+  /** A model stub that yields a fixed list of chunks. */
+  const scriptedLlm = (script, sink = []) => ({
+    stream: async function* (request) {
+      sink.push(request);
+      for (const chunk of script) yield chunk;
+    },
+  });
+  const explainOnce = (script, sink) =>
+    explainFileChange({
+      llm: scriptedLlm(script, sink),
+      route: draftRoute,
+      path: 'app.js',
+      patch: 'diff --git a/app.js b/app.js\n+const x = 1;\n',
+    });
+
+  const reasoningOnly = [
+    { type: 'reasoning-delta', index: 0, text: 'weighing the change…' },
+    { type: 'usage', usage: { inputTokens: 900, outputTokens: 700, reasoningTokens: 700 } },
+    { type: 'finish', reason: { kind: 'max-tokens' } },
+  ];
+  const emptySink = [];
+  const recovered = await explainOnce(reasoningOnly, emptySink);
+  check('a model that spent its budget thinking is retried', emptySink.length === 2, emptySink.length);
+  check('and the retry asks for more room', emptySink[1].maxTokens === emptySink[0].maxTokens * 2, {
+    first: emptySink[0].maxTokens,
+    second: emptySink[1].maxTokens,
+  });
+  check('still failing, it names the real cause', recovered.ok === false && /budget/.test(recovered.error), recovered.error);
+  check('rather than blaming an empty answer', !/empty explanation/.test(recovered.error), recovered.error);
+
+  // the retry succeeds when the second attempt has room
+  let call = 0;
+  const recoveringLlm = {
+    stream: async function* () {
+      call += 1;
+      if (call === 1) {
+        yield { type: 'finish', reason: { kind: 'max-tokens' } };
+        return;
+      }
+      yield { type: 'text-delta', index: 0, text: '- The guard now rejects empty input.' };
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    },
+  };
+  const explainedOnRetry = await explainFileChange({
+    llm: recoveringLlm,
+    route: draftRoute,
+    path: 'app.js',
+    patch: 'diff --git a/app.js b/app.js\n+const x = 1;\n',
+  });
+  check('a retry that works returns the explanation', explainedOnRetry.ok === true && /guard/.test(explainedOnRetry.summary), explainedOnRetry);
+
+  // an adapter that hands over a whole block instead of deltas is understood
+  const blockOnly = await explainOnce([
+    { type: 'block-start', index: 0, blockType: 'text' },
+    { type: 'block-end', index: 0, block: { type: 'text', text: '- The block arrived whole.' } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]);
+  check('a text block without deltas is still read', blockOnly.ok === true && /arrived whole/.test(blockOnly.summary), blockOnly);
+
+  // a provider error is a decision, not a fluke: no retry
+  const errorSink = [];
+  const refused = await explainOnce(
+    [{ type: 'finish', reason: { kind: 'error', failure: { message: 'quota exhausted', code: 'QUOTA' } } }],
+    errorSink,
+  );
+  check('a provider error is not retried', errorSink.length === 1, errorSink.length);
+  check('and its own message is passed through', /quota exhausted/.test(refused.error), refused.error);
+
+  // reasoning tokens travel with the result so a caller can see what happened
+  const withUsage = [];
+  const measured = await explainFileChange({
+    llm: scriptedLlm(
+      [
+        { type: 'text-delta', index: 0, text: '- Fine.' },
+        { type: 'usage', usage: { inputTokens: 10, outputTokens: 20, reasoningTokens: 5 } },
+        { type: 'finish', reason: { kind: 'stop' } },
+      ],
+      withUsage,
+    ),
+    route: draftRoute,
+    path: 'app.js',
+    patch: 'diff --git a/app.js b/app.js\n+x\n',
+  });
+  check('reports the token usage it was given', measured.meta?.usage?.reasoningTokens === 5, measured.meta);
+
   section('ignore patterns are filtered before they are written');
   const keep = normalizeIgnorePatterns(
     [
