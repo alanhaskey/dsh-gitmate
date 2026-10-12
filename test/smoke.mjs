@@ -743,6 +743,20 @@ try {
   const orderProblems = findRenderOrderProblems(panelSource);
   check('no binding is read before it is declared', orderProblems.length === 0, orderProblems);
 
+  // The shell draws its own tooltips, so a native `title` never surfaces in a
+  // plugin's markup: hover text has to go through the panel's own bubble.
+  const strayTitles = [...panelSource.matchAll(/^\s*title: (.+)$/gm)].map((match) => match[1].trim());
+  check(
+    'panel controls do not rely on the native title attribute',
+    strayTitles.every((value) => value.startsWith('option.title') || value.startsWith('() =>')),
+    strayTitles,
+  );
+  check(
+    'the model-backed controls carry an AI mark',
+    (panelSource.match(/aiChip\(/g) ?? []).length >= 6,
+    (panelSource.match(/aiChip\(/g) ?? []).length,
+  );
+
   section('the panel only names theme tokens that exist');
   // The published alias set, exactly as the live client Theme provider reports it
   // (cordis_inspect_query, platform=client, provider=Theme, method=listTokens).
