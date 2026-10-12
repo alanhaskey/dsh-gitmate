@@ -620,7 +620,7 @@ try {
   // must come back as its Chinese text with the same values in place.
   const roundTrip = [];
   for (const [key, entry] of Object.entries(HOST_MESSAGES)) {
-    const sample = entry.en.replace(/\{(\w+)\}/g, (_, name) => `<${name}>`);
+    const sample = (entry.match ?? entry.en).replace(/\{(\w+)\}/g, (_, name) => `<${name}>`);
     const expected = entry.zh.replace(/\{(\w+)\}/g, (_, name) => `<${name}>`);
     const actual = zhText.message(sample);
     if (actual !== expected) roundTrip.push({ key, sample, expected, actual });
@@ -652,6 +652,46 @@ try {
   check('the overwrite warning names the files', localizedOverwrite.includes('f.txt'), localizedOverwrite);
   check('and says what to do', localizedOverwrite.includes('提交或贮藏'), localizedOverwrite);
   check('and is not glued to stdout', !localizedOverwrite.includes('On branch'), localizedOverwrite);
+
+  section('a refusal names the mode that refused');
+  // A read-only session cannot write `.git`; a session already on
+  // danger-full-access that is still refused has a different problem. Saying
+  // which mode is what tells the two apart.
+  const deniedCore = createGitCore({
+    exec: async () => ({
+      code: 128,
+      stdout: '',
+      stderr: "fatal: Unable to create 'C:/x/.git/index.lock': Permission denied",
+      timedOut: false,
+      aborted: false,
+      denied: true,
+    }),
+    sandboxMode: 'read-only',
+    config: { commandTimeoutMs: 5000 },
+  });
+  const denied = await deniedCore.status({ cwd: toolRepo });
+  check('the failure carries the mode', String(denied.error ?? denied.reason ?? '').includes('session mode "read-only"'), denied);
+  const deniedText = hostText().message(String(denied.error ?? denied.reason));
+  check('the panel names the mode', deniedText.includes('read-only'), deniedText.slice(0, 60));
+  check('and says what to switch to', deniedText.includes('danger-full-access'), deniedText.slice(0, 200));
+  check('and the index.lock cause survives', deniedText.includes('index.lock'), deniedText.slice(-80));
+  check(
+    'English gets the same advice',
+    hostText('en').message(String(denied.error ?? denied.reason)).includes('danger-full-access'),
+    hostText('en').message(String(denied.error ?? denied.reason)).slice(0, 120),
+  );
+
+  // Without a mode (the panel's own route) the older wording is kept.
+  const plainDenied = createGitCore({
+    exec: async () => ({ code: 128, stdout: '', stderr: 'fatal: denied', timedOut: false, aborted: false, denied: true }),
+    config: { commandTimeoutMs: 5000 },
+  });
+  const noModeRefusal = await plainDenied.status({ cwd: toolRepo });
+  check(
+    'a refusal with no mode keeps the plain wording',
+    !String(noModeRefusal.error ?? noModeRefusal.reason).includes('session mode'),
+    noModeRefusal,
+  );
 
   section('a sandbox refusal is not an empty folder');
   // A probe fails either because this is not a repository or because git never
