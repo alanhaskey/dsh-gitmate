@@ -24,6 +24,7 @@ import {
   suggestIgnorePatterns,
 } from '../lib/messages.js';
 import { createHostText as hostText, MESSAGES as HOST_MESSAGES } from '../lib/text.js';
+import { normalizeFindings, normalizeGroups, reviewStagedChanges, suggestCommitSplit } from '../lib/review.js';
 import * as plugin from '../lib/plugin.js';
 
 /**
@@ -1122,6 +1123,93 @@ try {
   check('reports the state after undoing', undone.value.staged >= 1, undone.value);
   const restored = (await ask('commit', { sessionId: 'session-panel', message: 'feat(panel): add the panel entry' })).body;
   check('re-commits what was undone', restored.ok === true && restored.value.ok === true, restored.value);
+
+  section('review findings are checked against what was staged');
+  const keptFinding = normalizeFindings(
+    '```json\n[{"path":"a.js","line":3,"severity":"bug","what":"x","fix":"y"},{"path":"ghost.js","line":1,"severity":"bug","what":"invented"}]\n```',
+    ['a.js'],
+  );
+  check('keeps a finding that names a staged path', keptFinding.findings.length === 1 && keptFinding.findings[0].path === 'a.js', keptFinding);
+  check('and carries its line and severity', keptFinding.findings[0].line === 3 && keptFinding.findings[0].severity === 'bug', keptFinding.findings[0]);
+  // A plausible path the diff never mentioned is the failure a reader cannot catch.
+  check('drops a finding that names a path that is not staged', keptFinding.dropped === 1, keptFinding.dropped);
+  check('an unparseable reply is reported as unparsed', normalizeFindings('I read it, looks fine', ['a.js']).parsed === false);
+  check(
+    'an empty array is a valid clean answer',
+    normalizeFindings('[]', ['a.js']).parsed === true && normalizeFindings('[]', ['a.js']).findings.length === 0,
+  );
+  check(
+    'an unknown severity falls back to risk',
+    normalizeFindings('[{"path":"a.js","what":"x","severity":"urgent"}]', ['a.js']).findings[0].severity === 'risk',
+  );
+  check('a finding with no description is dropped', normalizeFindings('[{"path":"a.js","what":"  "}]', ['a.js']).findings.length === 0);
+  check('a line that is not a number becomes null', normalizeFindings('[{"path":"a.js","what":"x","line":"nope"}]', ['a.js']).findings[0].line === null);
+
+  section('a split plan must partition the change set');
+  const fullPlan = normalizeGroups('[{"message":"feat: a","paths":["a.js"]},{"message":"fix: b","paths":["b.js"]}]', ['a.js', 'b.js']);
+  check('a fullPlan partition is accepted', fullPlan.groups.length === 2 && fullPlan.complete === true, fullPlan);
+  const shortPlan = normalizeGroups('[{"message":"feat: a","paths":["a.js"]}]', ['a.js', 'b.js']);
+  check('a plan that leaves a file out is flagged', shortPlan.complete === false, shortPlan);
+  const twicePlan = normalizeGroups('[{"message":"a","paths":["a.js"]},{"message":"b","paths":["a.js"]}]', ['a.js']);
+  check('a path in two groups is only taken once', twicePlan.groups.length === 1 && twicePlan.complete === true, twicePlan);
+  check('a group with no message is dropped', normalizeGroups('[{"message":"  ","paths":["a.js"]}]', ['a.js']).groups.length === 0);
+  check('a group naming only unknown paths is dropped', normalizeGroups('[{"message":"x","paths":["ghost.js"]}]', ['a.js']).groups.length === 0);
+  check('an unparseable plan is reported as unparsed', normalizeGroups('here is my plan', ['a.js']).parsed === false);
+
+  section('the review and the split run on a real change set');
+  const reviewRoute = { provider: 'test', model: 'test-model' };
+  const reviewLlm = (reply, sink = []) => ({
+    stream: async function* (request) {
+      sink.push(request);
+      yield { type: 'text-delta', index: 0, text: reply };
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    },
+  });
+  writeFileSync(join(toolRepo, 'reviewed.js'), 'module.exports = 1;\n');
+  await core.stage({ cwd: toolRepo, action: 'add', paths: ['reviewed.js'] });
+  const reviewBundle = await core.changeBundle({ cwd: toolRepo, maxPatchBytes: 20000 });
+  check('the change bundle is available to review', reviewBundle.ok === true, reviewBundle.error);
+
+  const reviewed = await reviewStagedChanges({
+    llm: reviewLlm('[{"path":"reviewed.js","line":1,"severity":"risk","what":"no test","fix":"add one"}]'),
+    route: reviewRoute,
+    bundle: reviewBundle,
+  });
+  check('a review parses the model answer', reviewed.ok === true && reviewed.findings.length === 1, reviewed);
+  check('and the finding is usable by the panel', reviewed.findings[0].path === 'reviewed.js' && reviewed.findings[0].fix === 'add one', reviewed.findings[0]);
+  check('an empty repository change set cannot be reviewed', (await reviewStagedChanges({ llm: reviewLlm('[]'), route: reviewRoute, bundle: { staged: { files: [] } } })).ok === false);
+
+  const splitSink = [];
+  const splitPlan = await suggestCommitSplit({
+    llm: reviewLlm('[{"message":"feat: add reviewed","paths":["reviewed.js"],"why":"one thing"}]', splitSink),
+    route: reviewRoute,
+    bundle: reviewBundle,
+  });
+  check('a split plan parses', splitPlan.ok === true && splitPlan.groups.length === 1 && splitPlan.complete === true, splitPlan);
+  check('and the prompt states the exact staged paths', splitSink[0].messages[0].content[0].text.includes('reviewed.js'), 'path list missing from the prompt');
+
+  section('committing one group leaves the rest staged');
+  const groupRepo = join(sandbox, 'group-repo');
+  await core.init({ cwd: groupRepo });
+  for (const [key, value] of [['user.name', 'Group User'], ['user.email', 'group@example.com']]) {
+    await core.config({ cwd: groupRepo, action: 'set', key, value });
+  }
+  writeFileSync(join(groupRepo, 'seed.txt'), 'seed\n');
+  await core.commit({ cwd: groupRepo, all: true, message: 'chore: seed' });
+  sessionCwds['session-group'] = groupRepo;
+
+  writeFileSync(join(groupRepo, 'one.js'), 'one\n');
+  writeFileSync(join(groupRepo, 'two.js'), 'two\n');
+  await core.stage({ cwd: groupRepo, action: 'add' });
+  const grouped = (await ask('commitGroup', { sessionId: 'session-group', paths: ['one.js'], message: 'feat: one' })).body;
+  check('the group commits', grouped.value.ok === true, grouped.value);
+  check('only the named path is committed', (await core.log({ cwd: groupRepo, limit: 1 })).commits[0].subject === 'feat: one', (await core.log({ cwd: groupRepo, limit: 1 })).commits);
+  const afterGroup = await core.status({ cwd: groupRepo });
+  check('and the other file is still there to commit', afterGroup.staged.some((entry) => entry.path === 'two.js'), afterGroup.staged);
+  check('reported as remaining', grouped.value.remaining === 1, grouped.value.remaining);
+  check('a group with no paths is refused', (await ask('commitGroup', { sessionId: 'session-group', paths: [], message: 'x' })).body.ok === false);
+  check('a group with no message is refused', (await ask('commitGroup', { sessionId: 'session-group', paths: ['two.js'], message: '' })).body.ok === false);
+  check('an endpoint without a model says so', (await ask('review', { sessionId: 'session-group' })).body.value.ok === false, 'review should refuse without a model');
 
   section('init with a first commit');
   const anonymous = join(sandbox, 'anonymous');
