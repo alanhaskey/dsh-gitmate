@@ -624,6 +624,47 @@ try {
   check('and says what to do', localizedOverwrite.includes('提交或贮藏'), localizedOverwrite);
   check('and is not glued to stdout', !localizedOverwrite.includes('On branch'), localizedOverwrite);
 
+  section('undoing a commit is not the same as rewinding to it');
+  // The panel's newest-commit button says "undo this commit", so the reset has to
+  // step back one commit. Sending the clicked hash instead makes it
+  // `reset --soft HEAD` — a no-op that reported itself as a rewind, which is what
+  // a user saw as "it says it rewound but the list is empty".
+  const undoTrail = join(sandbox, 'undo-trail');
+  await core.init({ cwd: undoTrail });
+  for (const [key, value] of [['user.name', 'Undo User'], ['user.email', 'undo@example.com']]) {
+    await core.config({ cwd: undoTrail, action: 'set', key, value });
+  }
+  writeFileSync(join(undoTrail, 'first.txt'), 'first\n');
+  await core.commit({ cwd: undoTrail, all: true, message: 'feat: first' });
+  writeFileSync(join(undoTrail, 'second.txt'), 'second\n');
+  await core.commit({ cwd: undoTrail, all: true, message: 'feat: second' });
+  const headHash = (await core.log({ cwd: undoTrail, limit: 1 })).commits[0].hash;
+
+  const rewindToHead = await core.resetLastCommit({ cwd: undoTrail, mode: 'soft', target: headHash });
+  check('rewinding to the commit that is already HEAD changes nothing', rewindToHead.ok === true && rewindToHead.dropped === 0, rewindToHead);
+  check('and it says so rather than reporting a rewind', rewindToHead.staged === 0 && rewindToHead.unstaged === 0, rewindToHead);
+  check('the commit is still there afterwards', (await core.log({ cwd: undoTrail, limit: 1 })).commits[0].hash === headHash);
+
+  // What the button actually promises: the commit goes away, its work stays staged.
+  const undid = await core.resetLastCommit({ cwd: undoTrail, mode: 'soft' });
+  check('undoing the newest commit keeps its changes staged', undid.ok === true && undid.staged === 1, undid);
+  check('and names the commit it undid', undid.undone?.subject === 'feat: second', undid.undone);
+  const afterUndo = await core.status({ cwd: undoTrail });
+  check('so the file appears in the list', afterUndo.staged.some((entry) => entry.path === 'second.txt'), afterUndo.staged);
+  check('and the branch moved back one commit', (await core.log({ cwd: undoTrail, limit: 1 })).commits[0].subject === 'feat: first');
+
+  // The same trap one level down: rewinding to an older commit does discard work.
+  // Two commits stack on top of 'feat: first', so going back to it drops two.
+  for (const name of ['third', 'fourth']) {
+    writeFileSync(join(undoTrail, `${name}.txt`), `${name}\n`);
+    await core.commit({ cwd: undoTrail, all: true, message: `feat: ${name}` });
+  }
+  const older = (await core.log({ cwd: undoTrail, limit: 3 })).commits.at(-1);
+  check('the rewind target is the oldest of the three', older.subject === 'feat: first', older.subject);
+  const back = await core.resetLastCommit({ cwd: undoTrail, mode: 'soft', target: older.hash });
+  check('rewinding to an older commit reports what it discarded', back.ok === true && back.dropped === 2, back);
+  check('and leaves those changes staged', back.staged > 0, back);
+
   section('every view of the panel renders without throwing');
   {
     const Fragment = Symbol('Fragment');
