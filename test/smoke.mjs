@@ -742,7 +742,10 @@ try {
       25: COMMIT.hash,
       26: 'v1.0.0',
       28: { ok: true, findings: [{ path: 'a.js', line: 3, severity: 'bug', what: 'w', fix: 'f' }], dropped: 1 },
-      29: { ok: true, complete: true, groups: [{ message: 'feat: a', paths: ['a.js'], why: 'one thing' }] },
+      29: { ok: true, complete: true, groups: [
+        { message: 'feat: a', paths: ['a.js'], why: 'one thing' },
+        { message: 'fix: b', paths: ['b.js'], why: 'another' },
+      ] },
       30: { hash: COMMIT.hash, path: 'a.js' },
       31: { ok: true, rows: ROWS, flags: [], files: [] },
       32: [{ ref: 'stash@{0}', subject: 'wip', when: 'now' }],
