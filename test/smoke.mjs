@@ -24,7 +24,7 @@ import {
   suggestIgnorePatterns,
 } from '../lib/messages.js';
 import { createHostText as hostText, MESSAGES as HOST_MESSAGES } from '../lib/text.js';
-import { normalizeFindings, normalizeGroups, reviewStagedChanges, suggestCommitSplit } from '../lib/review.js';
+import { extractArray, normalizeFindings, normalizeGroups, reviewStagedChanges, suggestCommitSplit } from '../lib/review.js';
 import * as plugin from '../lib/plugin.js';
 
 /**
@@ -1121,6 +1121,8 @@ try {
           ['the history view', { ...filled, 12: 'history' }],
           ['the review in place of the list', { ...filled, 12: 'changes' }],
           ['the split in place of the list', { ...filled, 12: 'changes', 27: null }],
+      ['a truncated split plan', { ...filled, 12: 'changes', 27: null, 29: { ok: true, complete: false, truncated: true, groups: [{ message: 'feat: a', paths: ['a.js'], why: 'x' }] } }],
+      ['an unreadable split answer', { ...filled, 12: 'changes', 27: null, 29: { ok: true, complete: false, unparsed: true, truncated: true, groups: [], raw: 'not json' } }],
         ];
 
         const failures = [];
@@ -1727,6 +1729,55 @@ try {
   );
   check('a finding with no description is dropped', normalizeFindings('[{"path":"a.js","what":"  "}]', ['a.js']).findings.length === 0);
   check('a line that is not a number becomes null', normalizeFindings('[{"path":"a.js","what":"x","line":"nope"}]', ['a.js']).findings[0].line === null);
+
+  section('a truncated JSON answer is retried with more room');
+  // The retry is what stops the salvage from being the normal path: a reply cut
+  // by the output limit gets one attempt with twice the budget.
+  const splitReplies = [
+    '[{"message":"feat: a","paths":["a.js"],"why":"x"},{"message":"feat: b","paths":["b',
+    '[{"message":"feat: a","paths":["a.js"],"why":"x"},{"message":"feat: b","paths":["b.js"],"why":"y"}]',
+  ];
+  const budgets = [];
+  const scripted = {
+    stream: async function* (request) {
+      budgets.push(request.maxTokens);
+      const reply = splitReplies.length > 1 ? splitReplies.shift() : splitReplies[0];
+      yield { type: 'text-delta', index: 0, text: reply };
+      yield {
+        type: 'finish',
+        reason: budgets.length === 1 ? { kind: 'max-tokens' } : { kind: 'stop' },
+      };
+    },
+  };
+  const retried = await suggestCommitSplit({
+    llm: scripted,
+    route: { provider: 'test', model: 'test-model' },
+    bundle: { staged: { files: [{ path: 'a.js' }, { path: 'b.js' }], patch: 'diff' } },
+    maxTokens: 1000,
+  });
+  check('the retry gets twice the budget', budgets.length === 2 && budgets[1] === 2000, budgets);
+  check('and the complete answer is the one kept', retried.groups.length === 2 && retried.truncated === false, retried);
+  check('with the partition complete', retried.complete === true, retried);
+
+  section('a reply cut off mid-array is salvaged, not discarded');
+  // A model that runs out of output budget stops mid-JSON. Throwing the whole
+  // reply away turned "three usable groups" into "no plan at all" — the user saw
+  // an empty split screen with a complete plan in the raw text below it.
+  const cutOff =
+    '[{"message":"feat: a","paths":["a.js"],"why":"x"},{"message":"feat: b","paths":["b.js"],"why":"y"},{"message":"feat: c","paths":["c';
+  const salvaged = extractArray(cutOff);
+  check('the complete leading elements survive', salvaged.entries?.length === 2, salvaged.entries);
+  check('and the cut is reported', salvaged.truncated === true, salvaged.truncated);
+  check('a whole array is not marked truncated', extractArray('[{"message":"a","paths":["a.js"]}]').truncated === false);
+  check('a reply with no array at all parses to nothing', extractArray('I cannot help with that').entries === null);
+
+  const salvagedPlan = normalizeGroups(cutOff, ['a.js', 'b.js', 'c.js']);
+  check('the salvaged plan has groups to show', salvagedPlan.groups.length === 2, salvagedPlan.groups);
+  check('it is flagged as truncated', salvagedPlan.truncated === true, salvagedPlan);
+  check('and as incomplete, since c.js is missing', salvagedPlan.complete === false, salvagedPlan);
+
+  const cutFindings = normalizeFindings('[{"path":"a.js","what":"w"},{"path":"b.js","wh', ['a.js', 'b.js']);
+  check('findings survive a cut too', cutFindings.findings.length === 1 && cutFindings.truncated === true, cutFindings);
 
   section('a split plan must partition the change set');
   const fullPlan = normalizeGroups('[{"message":"feat: a","paths":["a.js"]},{"message":"fix: b","paths":["b.js"]}]', ['a.js', 'b.js']);

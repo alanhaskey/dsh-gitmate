@@ -78,7 +78,7 @@ dsh plugin --profile web add github:alanhaskey/dsh-gitmate
 ## 开发
 
 ```sh
-node test/smoke.mjs     # 551 项断言，跑真实 git，不需要 DSH
+node test/smoke.mjs     # 562 项断言，跑真实 git，不需要 DSH
 ```
 
 ```
