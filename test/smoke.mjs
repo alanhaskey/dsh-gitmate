@@ -463,7 +463,7 @@ try {
       if (name === 'sandboxPolicy') return sandboxPolicy;
       if (name === 'sessions') {
         return {
-          get: (id) => (Object.hasOwn(sessionCwds, id) ? { header: { cwd: sessionCwds[id] } } : undefined),
+          get: (id) => (Object.hasOwn(sessionCwds, id) ? { id, header: { cwd: sessionCwds[id] } } : undefined),
         };
       }
       if (name === 'configEditor') {
@@ -1883,6 +1883,45 @@ try {
   });
   check('a split plan parses', splitPlan.ok === true && splitPlan.groups.length === 1 && splitPlan.complete === true, splitPlan);
   check('and the prompt states the exact staged paths', splitSink[0].messages[0].content[0].text.includes('reviewed.js'), 'path list missing from the prompt');
+
+  section('the panel runs git under its own session\'s permission');
+  // Every panel endpoint falls back to the deployment default without this — and
+  // on a Windows host whose `workspace-write` runner cannot start, that made the
+  // panel unable to run git at all, no matter what the user chose for the session
+  // the tab belongs to.
+  const looseSession = join(sandbox, 'loose-repo');
+  await core.init({ cwd: looseSession });
+  for (const [key, value] of [['user.name', 'Panel User'], ['user.email', 'panel@example.com']]) {
+    await core.config({ cwd: looseSession, action: 'set', key, value });
+  }
+  writeFileSync(join(looseSession, 'panel.txt'), 'x\n');
+  await core.commit({ cwd: looseSession, all: true, message: 'chore: seed' });
+  sessionCwds['session-loose'] = looseSession;
+  sessionModes['session-loose'] = 'danger-full-access';
+
+  await ask('status', { sessionId: 'session-loose' });
+  check(
+    'a panel request carries the session policy',
+    lastShellRequest.sandboxPolicy?.mode === 'danger-full-access',
+    lastShellRequest.sandboxPolicy,
+  );
+  check(
+    'and resolved it from that session',
+    resolvedPolicies.some((policy) => policy.sessionId === 'session-loose'),
+    resolvedPolicies,
+  );
+
+  // A session that never chose a mode resolves through its own session to the
+  // deployment default, which is the precedence the Host documents.
+  sessionCwds['session-plain'] = toolRepo;
+  resolvedPolicies.length = 0;
+  await ask('status', { sessionId: 'session-plain' });
+  check(
+    'a session with no chosen mode resolves to the deployment default',
+    lastShellRequest.sandboxPolicy?.mode === 'workspace-write' &&
+      lastShellRequest.sandboxPolicy?.sessionId === 'session-plain',
+    lastShellRequest.sandboxPolicy,
+  );
 
   section('committing one group leaves the rest staged');
   const groupRepo = join(sandbox, 'group-repo');

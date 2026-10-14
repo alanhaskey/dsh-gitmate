@@ -70,6 +70,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 - **"Undo this commit" and "rewind to here" are separate too.** On the newest commit the button undoes that commit and leaves its changes staged, unstaged, or deleted as you choose; on an older commit it moves the branch pointer back to that commit. The notice names the commit that was actually undone and always states how many were discarded — including none.
 - **A refusal says which mode refused.** A read-only session cannot write `.git`, so committing and switching branches are rejected by design; the message names the mode and what to switch to. If it is already `danger-full-access` and still refused, the sandbox backend on that machine is refusing writes and the Harness needs restarting — two different problems, told apart.
 - **git's own diagnostics are pinned to English** (`LC_ALL=C`). The plugin's text is still localised by the setting; git's is kept stable because the phrase table in `lib/text.js` matches English sentences, and a localised git defeats it — worse on Windows, where git writes in the console code page and the pipeline decodes UTF-8, so a Chinese message arrives as mojibake.
+- **The panel follows the permission mode of the session it belongs to.** Every panel request is bound to a session — it is that session's tab — so git runs under that session's mode rather than the deployment default. This matters: where the default (`workspace-write`) cannot start, the panel could not run git at all, whatever the user set on their own session.
 - **Every tool call runs git under the calling session's permission mode**, with the deployment default only as a fallback. The panel's route has no session, so it passes no policy at all and leaves the choice to the Host.
 - **"git could not be run" and "this is not a repository" are different failures**, and the panel says which: the first gives the reason and a retry instead of inviting you to `git init` a repository that exists and merely cannot be read. An environment problem such as a sandbox that will not start is explained in one sentence, with the original cause kept.
 - **Model output is treated as untrusted input.** A review finding that names a file which is not staged is dropped; a split plan that does not cover every staged file is flagged; an answer that does not parse is shown as-is rather than reported as "nothing found".
@@ -78,7 +79,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 ## Development
 
 ```sh
-node test/smoke.mjs     # 580 assertions; runs real git, no DSH required
+node test/smoke.mjs     # 583 assertions; runs real git, no DSH required
 ```
 
 ```
