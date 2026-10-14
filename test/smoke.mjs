@@ -723,6 +723,23 @@ try {
   check('and keeps the reported cause', refusalText.includes('mkdtemp'), refusalText.slice(-60));
   // English is left exactly as the Host wrote it: there is nothing to translate,
   // and rewriting an English message for an English reader would only lose detail.
+  // The causes are platform-specific, and naming the wrong one sends the reader to
+  // the wrong place: a Windows %TEMP% problem says nothing to a Linux user whose
+  // kernel lacks Landlock.
+  const under = (platform) => hostText('auto', { platform }).message(refusal);
+  check('Linux advice names bubblewrap and Landlock', under('linux').includes('bubblewrap') && under('linux').includes('Landlock'), under('linux').slice(0, 100));
+  check('Windows advice names %TEMP%', under('win32').includes('%TEMP%'), under('win32').slice(0, 100));
+  check('macOS advice names sandbox-exec', under('darwin').includes('sandbox-exec'), under('darwin').slice(0, 100));
+  check(
+    'an unnamed platform still gets useful advice',
+    under('freebsd').includes('danger-full-access') && !under('freebsd').includes('%TEMP%'),
+    under('freebsd').slice(0, 100),
+  );
+  check(
+    'and every one of them keeps the reported cause',
+    ['linux', 'darwin', 'win32', 'freebsd'].every((platform) => under(platform).includes('mkdtemp')),
+  );
+
   check(
     'and English keeps the Host wording untouched',
     hostText('en').message(refusal) === refusal,
@@ -848,6 +865,39 @@ try {
     notOkBlock.includes('response.text()') && notOkBlock.includes('endpoint') && notOkBlock.includes('answered HTTP'),
     notOkBlock.slice(0, 120) || 'no non-ok branch found',
   );
+
+  section('hostile filenames survive the quoting');
+  // Every argument goes through a shell string, so a name with a space, a quote,
+  // or a dollar sign is the one place a platform difference shows up as data
+  // loss rather than an error. Exercised end to end, on a real repository.
+  const awkward = join(sandbox, 'awkward-repo');
+  await core.init({ cwd: awkward });
+  for (const [key, value] of [['user.name', 'Quote User'], ['user.email', 'quote@example.com']]) {
+    await core.config({ cwd: awkward, action: 'set', key, value });
+  }
+  // A space, a single quote, a dollar sign and a semicolon — each of which a
+  // naive quoter turns into a broken command or a second command.
+  const tricky = "wei'rd $file;name.txt";
+  writeFileSync(join(awkward, tricky), 'content\n');
+  const awkwardStaged = await core.stage({ cwd: awkward, action: 'add', paths: [tricky] });
+  check('a hostile filename can be staged', awkwardStaged.ok === true, staged);
+  const awkwardStatus = await core.status({ cwd: awkward });
+  check(
+    'and it arrives whole in the status',
+    awkwardStatus.staged.some((entry) => entry.path === tricky),
+    awkwardStatus.staged.map((entry) => entry.path),
+  );
+  const awkwardCommit = await core.commit({ cwd: awkward, message: 'chore: awkward name' });
+  check('and can be committed', awkwardCommit.ok === true, committed);
+  const awkwardPatch = await core.diff({ cwd: awkward, scope: 'last-commit', paths: [tricky] });
+  check('and its patch is readable', awkwardPatch.ok === true && awkwardPatch.patch.includes('content'), awkwardPatch.error ?? awkwardPatch.patch?.slice(0, 80));
+  const awkwardLog = await core.log({ cwd: awkward, limit: 1 });
+  check('with the commit recorded', awkwardLog.commits[0]?.subject === 'chore: awkward name', awkwardLog.commits[0]);
+
+  // The quoter itself, for both shells.
+  check('a quote is escaped for a POSIX shell', quoteFor("a'b", false) === `'a'\\''b'`, quoteFor("a'b", false));
+  check('and doubled for PowerShell', quoteFor("a'b", true) === "'a''b'", quoteFor("a'b", true));
+  check('a dollar sign stays literal', quoteFor('$HOME', false) === "'$HOME'" && quoteFor('$HOME', true) === "'$HOME'");
 
   section('the git invocation works under a Windows shell too');
   // Windows gets the Harness's PowerShell executor, where `VAR=value git …` is

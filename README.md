@@ -4,6 +4,8 @@
 
 Runs anywhere the Harness does: macOS, Linux, and Windows (PowerShell).
 
+Only two things genuinely differ across platforms, and both live on the Host side: **how arguments are quoted** (PowerShell doubles a single quote, a POSIX shell closes-escapes-reopens; chosen by `process.platform`) and **how the environment is passed** (through the shell request's `env` field rather than a POSIX `VAR=value` prefix, which is not a command on Windows). Nothing else is platform-aware: paths go through `node:path`, nothing outside `lib/` is written, and no file needing an executable bit is created. When the sandbox will not start, the advice **names the cause for the platform you are on** (bubblewrap/Landlock on Linux, `sandbox-exec` on macOS, `%TEMP%` on Windows).
+
 English | [中文](README.zh.md)
 
 Review changes, read diffs, stage, commit with a generated message, merge, stash, sync, and rewind history without leaving the panel. Every operation is also a tool the agent can call, so asking in chat works too.
@@ -80,7 +82,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 ## Development
 
 ```sh
-node test/smoke.mjs     # 585 assertions; runs real git, no DSH required
+node test/smoke.mjs     # 598 assertions; runs real git, no DSH required
 ```
 
 ```

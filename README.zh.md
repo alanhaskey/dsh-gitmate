@@ -4,6 +4,8 @@
 
 macOS、Linux、Windows（PowerShell）都能跑。
 
+跨平台这件事上真正会出问题的只有两处，都在 Host 侧：**命令怎么引号**（PowerShell 里单引号靠翻倍转义，POSIX 是闭合-转义-重开；按 `process.platform` 选择）和**环境变量怎么传**（走 shell 请求的 `env` 字段，而不是 POSIX 的 `VAR=value` 前缀——Windows 上那不是命令）。除此之外只用 `node:path`，不写 `lib/` 之外的东西，也不写任何需要执行位的文件。沙箱起不来时的提示会**按平台给对应的建议**（Linux 是 bubblewrap/Landlock，macOS 是 sandbox-exec，Windows 是 `%TEMP%`）。
+
 [English](README.md) | 中文
 
 看改动、读差异、暂存、用生成的说明提交、合并、贮藏、同步、回滚历史——都不用离开面板。每个操作同样是 Agent 能调用的工具，所以在对话里说一句也能做。
@@ -80,7 +82,7 @@ dsh plugin --profile web add github:alanhaskey/dsh-gitmate
 ## 开发
 
 ```sh
-node test/smoke.mjs     # 585 项断言，跑真实 git，不需要 DSH
+node test/smoke.mjs     # 598 项断言，跑真实 git，不需要 DSH
 ```
 
 ```
