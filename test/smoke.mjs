@@ -1149,6 +1149,68 @@ try {
       }
 
 
+  section('a .gitignore is tidied, not only appended to');
+  const messyIgnore = [
+    'node_modules/',
+    '.DS_Store',
+    'node_modules/',
+    'node_modules/.cache/',
+    'dist/',
+    '',
+    '',
+    '*.log',
+    'npm-debug.log*',
+  ].join('\n');
+  const tidiedUp = core.organizeGitignore(messyIgnore);
+  const tidiedLines = tidiedUp.text.split('\n');
+  check('an exact duplicate is dropped', !tidiedLines.includes('node_modules/') || tidiedLines.filter((line) => line === 'node_modules/').length === 1, tidiedLines);
+  check('and reported as a duplicate', tidiedUp.removed.some((entry) => entry.reason === 'duplicate' && entry.line === 'node_modules/'), tidiedUp.removed);
+  check(
+    'a rule an earlier broader one covers is dropped',
+    !tidiedLines.includes('node_modules/.cache/') &&
+      tidiedUp.removed.some((entry) => entry.reason === 'covered' && entry.by === 'node_modules/'),
+    tidiedUp.removed,
+  );
+  check('blank runs collapse to one', !tidiedUp.text.includes('\n\n\n'), JSON.stringify(tidiedUp.text));
+  check('and it ends with a single newline', tidiedUp.text.endsWith('\n') && !tidiedUp.text.endsWith('\n\n'), JSON.stringify(tidiedUp.text.slice(-8)));
+  check('entries are grouped under headings', tidiedUp.grouped === true && tidiedUp.text.includes('# Node'), tidiedLines.slice(0, 4));
+  // Nothing that was there logically may disappear.
+  for (const rule of ['dist/', '*.log', 'npm-debug.log*', '.DS_Store']) {
+    check(`the rule ${rule} survives`, tidiedLines.includes(rule), tidiedLines);
+  }
+
+  // A glob never removes anything: `*.log` does not cover `npm-debug.log*`.
+  check('a glob rule does not swallow other rules', tidiedLines.includes('npm-debug.log*'), tidiedLines);
+
+  // Order is semantic once a negation exists, so nothing is dropped or moved.
+  const negated = ['*.log', '!keep.log', 'dist/', 'dist/'].join('\n');
+  const negatedResult = core.organizeGitignore(negated);
+  // Removing an exact duplicate never changes meaning, negation or not; dropping a
+  // "covered" rule could, because a `!` line may re-include it.
+  check(
+    'a negation stops the covered-rule dropping',
+    negatedResult.removed.every((entry) => entry.reason === 'duplicate'),
+    negatedResult.removed,
+  );
+  check(
+    'while exact duplicates are still collapsed',
+    negatedResult.text.split('\n').filter((line) => line === 'dist/').length === 1,
+    negatedResult.text,
+  );
+  check('and stops the reordering', negatedResult.grouped === false, negatedResult.grouped);
+  check('so the file keeps its shape', negatedResult.text.startsWith('*.log\n!keep.log'), JSON.stringify(negatedResult.text));
+
+  // A file someone annotated is a file someone organised on purpose.
+  const commented = ['# mine, in this order', '.DS_Store', 'node_modules/'].join('\n');
+  const commentedResult = core.organizeGitignore(commented);
+  check('a hand-written comment stops the reordering', commentedResult.grouped === false, commentedResult.grouped);
+  check('but duplicates are still removed', core.organizeGitignore('# x\ndist/\ndist/').removed.length === 1);
+
+  // Idempotence: a second pass must find nothing left to do, or the button would
+  // rewrite the file every time it is pressed.
+  const secondPass = core.organizeGitignore(tidiedUp.text);
+  check('tidying twice changes nothing', secondPass.text === tidiedUp.text && secondPass.removed.length === 0, secondPass.removed);
+
   section('the panel never reads a binding before it exists');
   // A `const` in the panel body sits in its temporal dead zone until the line
   // that declares it, and two positions are evaluated *during* the render: a

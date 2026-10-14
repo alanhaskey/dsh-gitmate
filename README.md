@@ -33,7 +33,7 @@ Restart DSH once, refresh the page, then open **GitMate** from the sidebar's **+
 | **Review before commit** | Reads the staged changes and reports only what would bite — a wrong result, a missed edge case, an unhandled error, a committed secret, debug output left in, a behaviour change with no test. Click a finding to open that file's diff. |
 | **Split this commit** | Divides the staged changes into commits that each stand on their own, with a message for each. The plan is a draft you can edit: rewrite any message, merge a group into the one above, remove one, ask for a new plan, commit one group at a time, or commit them all in order. Each commit leaves the other files staged. |
 | **Explain a change** | Two to five bullets on what a file's change does, so you can review without reading every line. |
-| **`.gitignore`** | Infers the rules from the project's manifests and layout. One button creates it, one adds what is missing. |
+| **`.gitignore`** | Infers the rules from the project's manifests and layout. One button creates it; one adds what is missing **and tidies the whole file** — exact duplicates, rules an earlier broader rule already covers (`node_modules/.cache/` after `node_modules/`), and runs of blank lines. It groups entries under headings only when that cannot change the meaning: with a `!` rule (git decides by the last match, so order is semantic) or with your own comments, the order is kept and the panel says so. |
 
 Buttons that call a model are marked **AI**. Every generation uses the session's default model — there is no second model to configure.
 
@@ -78,7 +78,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 ## Development
 
 ```sh
-node test/smoke.mjs     # 562 assertions; runs real git, no DSH required
+node test/smoke.mjs     # 580 assertions; runs real git, no DSH required
 ```
 
 ```
