@@ -1362,6 +1362,18 @@ try {
     [...busyKinds].filter((kind) => !busyLabelled.has(kind)).length === 0,
     [...busyKinds].filter((kind) => !busyLabelled.has(kind)),
   );
+  // `unavailable` is not a transient failure: every probe re-attempts the same
+  // sandbox start-up, and on Windows a failed one has been observed to leave the
+  // whole run unable to write. The panel says so once and offers a retry.
+  check(
+    'the poll stops when git cannot run at all',
+    /if \(unavailableRef\.current\) return;/.test(panelSource) &&
+      /unavailableRef\.current = answer\.value\?\.unavailable === true/.test(panelSource),
+  );
+  check(
+    'and the error card offers a retry instead',
+    panelSource.includes("t('gitUnavailableTitle')") && panelSource.includes("onClick: () => void refresh(true)"),
+  );
   check(
     'and the wait is visible rather than only disabling controls',
     panelSource.includes('dsg-toast-running') && panelSource.includes('dsg-spin'),
