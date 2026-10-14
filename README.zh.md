@@ -48,6 +48,10 @@ dsh plugin --profile web add github:alanhaskey/dsh-gitmate
 
 ## 初始化
 
+不是仓库时，**历史（分支图表）按钮不可点**——没有仓库就没有历史可看；**设置仍然可以进入**——面板不按预期工作时，人第一个想去的就是设置。如果面板开着的时候仓库消失了（切换了文件夹、`.git` 被删掉），视图会退回改动列表，而不是让按钮亮着一个显示不出来的页面。
+
+
+
 一键初始化仓库并写入本机提交身份；`.gitignore` 两个按钮。**不需要你从一串技术栈里选**——插件自己读项目再决定。
 
 ## 配置
@@ -82,7 +86,7 @@ dsh plugin --profile web add github:alanhaskey/dsh-gitmate
 ## 开发
 
 ```sh
-node test/smoke.mjs     # 598 项断言，跑真实 git，不需要 DSH
+node test/smoke.mjs     # 601 项断言，跑真实 git，不需要 DSH
 ```
 
 ```

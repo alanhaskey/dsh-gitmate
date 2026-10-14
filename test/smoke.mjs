@@ -1162,6 +1162,10 @@ try {
         const scenarios = [
           ['a fresh mount', {}],
           ['no repository', { 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' } }],
+      // The state the user reported: no repository, with the history view asked
+      // for. The empty state must be what renders.
+      ['no repository, history asked for', { 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' }, 12: 'history' }],
+      ['no repository, settings asked for', { 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' }, 12: 'settings' }],
           ['a failed status read', { 0: { ok: false, isRepo: false, error: 'git is not installed' } }],
           ['a clean tree', { 0: { ...repoStatus, clean: true, staged: [], unstaged: [], untracked: [], conflicted: [], operation: '', ahead: 0 } }],
           ['a detached HEAD', { 0: { ...repoStatus, detached: true, branch: '', upstream: '', operation: '' }, 13: [] }],
@@ -1444,6 +1448,26 @@ try {
     'the floating surface is opaque rather than a translucent wash',
     !/\.dsg-toast \{[^}]*background:var\(--dsw-alias-bg-overlay\)/.test(panelSource) &&
       !panelSource.includes('dsg-running'),
+  );
+
+  // Without a repository there is no history to show, but settings is exactly
+  // where someone looks when the panel is not doing what they expect — so one is
+  // gated on `isRepo` and the other deliberately is not.
+  const historyButton = /className: `dsg-btn dsg-btn-icon\$\{view === 'history'[\s\S]{0,400}?disabled: ([^,\n]+),/.exec(panelSource);
+  const settingsButton = /className: `dsg-btn dsg-btn-icon\$\{view === 'settings'[\s\S]{0,400}?disabled(?:: ([^,\n]+))?,/.exec(panelSource);
+  check(
+    'the history button is disabled without a repository',
+    historyButton !== null && historyButton[1].includes('status?.isRepo'),
+    historyButton?.[1],
+  );
+  check(
+    'while the settings button stays available',
+    settingsButton !== null && (settingsButton[1] ?? 'disabled').trim() === 'disabled',
+    settingsButton?.[1],
+  );
+  check(
+    'and a history view that cannot be shown falls back',
+    /status\.isRepo !== true && view === 'history'[\s\S]{0,80}?setView\('changes'\)/.test(panelSource),
   );
 
   check(

@@ -48,6 +48,10 @@ Buttons that call a model are marked **AI**. Every generation uses the session's
 
 ## Setup
 
+Without a repository the **history button is disabled** — there is no history to show — while **settings stays reachable**, because that is where someone looks when the panel is not doing what they expect. If the repository disappears while the panel is open (the folder changed, `.git` was removed), the view falls back to the change list rather than leaving the button lit on a view that cannot render.
+
+
+
 One click initialises a repository and writes the local commit identity; two buttons handle `.gitignore`. Nothing is chosen from a list of ecosystems — the plugin reads the project and decides.
 
 ## Configuration
@@ -82,7 +86,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 ## Development
 
 ```sh
-node test/smoke.mjs     # 598 assertions; runs real git, no DSH required
+node test/smoke.mjs     # 601 assertions; runs real git, no DSH required
 ```
 
 ```
