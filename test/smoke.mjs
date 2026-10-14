@@ -1058,7 +1058,10 @@ try {
 
     function walk(node, seen) {
       if (node === null || node === undefined || typeof node === 'boolean') return;
-      if (typeof node === 'string' || typeof node === 'number') return;
+      if (typeof node === 'string' || typeof node === 'number') {
+        seen.text.push(String(node));
+        return;
+      }
       if (Array.isArray(node)) { for (const child of node) walk(child, seen); return; }
       if (typeof node.type === 'function') {
         seen.count += 1;
@@ -1164,8 +1167,10 @@ try {
           ['no repository', { 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' } }],
       // The state the user reported: no repository, with the history view asked
       // for. The empty state must be what renders.
-      ['no repository, history asked for', { 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' }, 12: 'history' }],
-      ['no repository, settings asked for', { 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' }, 12: 'settings' }],
+      // Both carry the loaded settings payload, so the comparison is about which
+      // view wins, not about which data happened to be present.
+      ['no repository, history asked for', { ...filled, 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' }, 12: 'history' }],
+      ['no repository, settings asked for', { ...filled, 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' }, 12: 'settings' }],
           ['a failed status read', { 0: { ok: false, isRepo: false, error: 'git is not installed' } }],
           ['a clean tree', { 0: { ...repoStatus, clean: true, staged: [], unstaged: [], untracked: [], conflicted: [], operation: '', ahead: 0 } }],
           ['a detached HEAD', { 0: { ...repoStatus, detached: true, branch: '', upstream: '', operation: '' }, 13: [] }],
@@ -1185,7 +1190,7 @@ try {
           stateOrder.length = 0;
           effectErrors.length = 0;
           overrides = patch;
-          const seen = { count: 0, errors: [], names: new Set() };
+          const seen = { count: 0, errors: [], names: new Set(), text: [] };
           walk(React.createElement(Panel, { sessionId: 's', usePanelInfo: () => ({ activePanelId: null }) }), seen);
           for (const name of seen.names) rendered.add(name);
           const bad = [...seen.errors, ...effectErrors.filter(Boolean)];
@@ -1193,6 +1198,37 @@ try {
         }
 
         check('no view throws while rendering', failures.length === 0, failures);
+
+    // What is actually on screen, by the keys the renderer was handed. A button
+    // that opens a page the empty state covers is otherwise invisible to tests.
+    const screenFor = (label) => {
+      stateOrder.length = 0;
+      effectErrors.length = 0;
+      overrides = scenarios.find(([name]) => name === label)[1];
+      const seen = { count: 0, errors: [], names: new Set(), text: [] };
+      walk(React.createElement(Panel, { sessionId: 's', usePanelInfo: () => ({ activePanelId: null }) }), seen);
+      return seen.text.join(' ');
+    };
+    // `notRepo` alone is not the card: the hero shows it as the branch breadcrumb
+    // for any non-repository. The card's own sentence is what distinguishes them.
+    const noRepo = screenFor('no repository');
+    check(
+      'a folder without a repository shows the initialise card',
+      noRepo.includes('notRepoHint') && noRepo.includes('notRepo'),
+      noRepo.slice(0, 120),
+    );
+    const noRepoSettings = screenFor('no repository, settings asked for');
+    check(
+      'and asking for settings shows settings, not the initialise card',
+      noRepoSettings.includes('gitignore') && !noRepoSettings.includes('notRepoHint'),
+      noRepoSettings.slice(0, 160),
+    );
+    check(
+      'the settings button is what made that reachable',
+      /dsg-btn-icon\$\{view === 'settings'[\s\S]{0,200}?disabled,/.test(
+        readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'),
+      ),
+    );
         // A render that stops early reports no throw either, so the parts that only
         // appear deeper in the tree are named. FileRow is where a tooltip helper that
         // lived in the panel went missing: the slot caught the throw, retired the tab,
