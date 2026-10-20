@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildGraph, createGitCore, diffRows, quoteFor, shellQuote } from '../lib/git-core.js';
+import { buildGraph, createGitCore, diffRows, graphSegments, quoteFor, shellQuote } from '../lib/git-core.js';
 import {
   buildUserPrompt,
   explainFileChange,
@@ -1148,7 +1148,24 @@ try {
           17: { writable: true, entryId: 'dsh-git', values: {} },
           18: { messageLanguage: 'auto', messageStyle: 'conventional', messageTemplate: 't', signoff: false, defaultBranch: 'main' },
           19: { ok: true, exists: true, current: 'node_modules/\n', groups: [{ id: 'node', label: 'Node', detected: true, entries: [], missing: 2 }], suggested: ['node'] },
-          21: { ok: true, head: oneCommit.hash, branch: 'main', graph: { laneCount: 2, rows: [{ lane: 0, before: [], after: [0, 1], parentLanes: [0, 1] }] }, commits: [oneCommit] },
+          21: {
+      ok: true,
+      head: oneCommit.hash,
+      branch: 'main',
+      // With the strokes included, so the render guard paints the real geometry
+      // rather than a node with nothing joined to it.
+      graph: {
+        laneCount: 2,
+        rows: [{
+          lane: 0, before: [], after: [0, 1], parentLanes: [0, 1],
+          segments: [
+            { kind: 'own', lane: 0, from: 12, to: 29, d: 'M 6.5 12 L 6.5 29' },
+            { kind: 'branch', lane: 1, from: 12, to: 29, d: 'M 6.5 12 C 6.5 20, 17.5 20, 17.5 29' },
+          ],
+        }],
+      },
+      commits: [oneCommit],
+    },
           22: oneCommit.hash,
           23: { [oneCommit.hash]: { ok: true, body: 'why', message: 'feat: x', files: [{ path: 'a.js', additions: 2, deletions: 1 }] } },
           24: { hash: oneCommit.hash, mode: 'hard' },
@@ -1238,6 +1255,88 @@ try {
         check('the commit graph renders', rendered.has('GraphCell') || rendered.has('GraphRow'), [...rendered].sort());
       }
 
+
+  section('the commit graph joins row to row');
+  // The reported defect: with more than one branch the tree looked broken and the
+  // rows did not meet. The rows are SVG cells only ROW_H tall while the row also
+  // carries padding and a border, so a stroke that stopped at the edge left a gap;
+  // and a parent lane opening at a commit was drawn as a bare stub with nothing
+  // joining it to its node.
+  const LANE_WIDTH = 11;
+  const ROW_HEIGHT = 24;
+  const OVERDRAW = 5;
+  const geometry = (commits) =>
+    buildGraph(commits).rows.map((row) => graphSegments(row, { laneWidth: LANE_WIDTH, rowHeight: ROW_HEIGHT, pad: OVERDRAW }));
+
+  const linearRows = geometry([
+    { hash: 'c', parents: ['b'] },
+    { hash: 'b', parents: ['a'] },
+    { hash: 'a', parents: [] },
+  ]);
+  check('a single lane overdraws both edges of its row', linearRows[1][0].from === -OVERDRAW && linearRows[1][0].to === ROW_HEIGHT + OVERDRAW, linearRows[1][0]);
+  check('and the newest commit starts at its node', linearRows[0][0].from === ROW_HEIGHT / 2, linearRows[0][0]);
+  check('while the root ends at its node', linearRows[2][0].to === ROW_HEIGHT / 2, linearRows[2][0]);
+
+  // A merge: the second parent's lane must LEAVE the node, and the stroke must
+  // reach the far edge so the next row can pick it up.
+  const mergedRows = geometry([
+    { hash: 'm', parents: ['a', 'b'] },
+    { hash: 'a', parents: ['r'] },
+    { hash: 'b', parents: ['r'] },
+    { hash: 'r', parents: [] },
+  ]);
+  const branch = mergedRows[0].find((segment) => segment.kind === 'branch');
+  check('a second parent branches out of the node', branch !== undefined && branch.from === ROW_HEIGHT / 2, mergedRows[0]);
+  check('and reaches the next row', branch !== undefined && branch.to === ROW_HEIGHT + OVERDRAW, branch);
+  check('the node keeps its own lane', mergedRows[0].some((segment) => segment.kind === 'own'), mergedRows[0]);
+
+  // The property that was broken: wherever a lane continues into the next row,
+  // the stroke above it must reach the bottom edge and the one below the top.
+  const brokenJoins = (rows) => {
+    const broken = [];
+    for (let index = 0; index < rows.length - 1; index += 1) {
+      const next = new Map(rows[index + 1].map((segment) => [segment.lane, segment]));
+      for (const segment of rows[index]) {
+        const following = next.get(segment.lane);
+        if (following === undefined) continue;
+        if (segment.to !== ROW_HEIGHT + OVERDRAW || following.from !== -OVERDRAW) {
+          broken.push({ row: index, lane: segment.lane, to: segment.to, from: following.from });
+        }
+      }
+    }
+    return broken;
+  };
+  check('every lane that continues meets the row below', brokenJoins(linearRows).length === 0, brokenJoins(linearRows));
+  check('and so does every lane through a merge', brokenJoins(mergedRows).length === 0, brokenJoins(mergedRows));
+
+  // And the same property on a real repository that actually has a merge.
+  const mergeRepo = join(sandbox, 'graph-repo');
+  await core.init({ cwd: mergeRepo });
+  for (const [key, value] of [['user.name', 'Graph User'], ['user.email', 'graph@example.com']]) {
+    await core.config({ cwd: mergeRepo, action: 'set', key, value });
+  }
+  writeFileSync(join(mergeRepo, 'base.txt'), 'base\n');
+  await core.commit({ cwd: mergeRepo, all: true, message: 'chore: base' });
+  await core.branch({ cwd: mergeRepo, action: 'create', name: 'side' });
+  await core.branch({ cwd: mergeRepo, action: 'switch', name: 'side' });
+  writeFileSync(join(mergeRepo, 'side.txt'), 'side\n');
+  await core.commit({ cwd: mergeRepo, all: true, message: 'feat: side' });
+  await core.branch({ cwd: mergeRepo, action: 'switch', name: 'main' });
+  writeFileSync(join(mergeRepo, 'main.txt'), 'main\n');
+  await core.commit({ cwd: mergeRepo, all: true, message: 'feat: main' });
+  // Asserted, not assumed: an unasserted setup step is how a fixture quietly tests
+  // the wrong thing. `merge` takes `branch`, not `source`.
+  const mergedIn = await core.merge({ cwd: mergeRepo, branch: 'side' });
+  check('the fixture merge actually happened', mergedIn.ok === true, mergedIn);
+  const liveHistory = await core.history({ cwd: mergeRepo, limit: 10 });
+  check('a real history carries its geometry', liveHistory.ok === true && liveHistory.graph.rows.every((row) => Array.isArray(row.segments)), liveHistory.graph?.rows?.[0]);
+  check(
+    'a real merge produces a branch stroke',
+    liveHistory.graph.rows.some((row) => row.segments.some((segment) => segment.kind === 'branch')),
+    liveHistory.graph.rows.map((row) => row.segments.map((segment) => segment.kind)),
+  );
+  const liveSegments = liveHistory.graph.rows.map((row) => row.segments);
+  check('and every lane in it joins the row below', brokenJoins(liveSegments).length === 0, brokenJoins(liveSegments));
 
   section('a .gitignore is tidied, not only appended to');
   const messyIgnore = [
