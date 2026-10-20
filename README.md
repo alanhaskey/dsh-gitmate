@@ -42,7 +42,12 @@ Buttons that call a model are marked **AI**. Every generation uses the session's
 ## Branches, history, remotes
 
 - **Branch selector** — switch, create, delete, and merge any branch into the checked-out one. A conflicted merge is reported with the files that need a decision, and can be aborted.
-- **Commit graph** — every branch and remote-tracking branch, not just this one. Strokes are computed on the Host and shipped with the data, so "the rows join up" is an assertion rather than something to eyeball: a lane passing through a row is drawn **past** its edges to cover that row's own padding and border (otherwise a gap opens between rows), a parent lane first appearing at a commit curves **out of the node** instead of starting as a floating stub, and one hue carries three weights — the commit's own line, the branch curves, and the lanes merely passing through. Expand a commit for its full message, the files it touched, and what you can do to it: rewind, revert, cherry-pick, rebase, or tag. Click a changed file to see its diff inside that commit.
+- **Commit graph** — every branch and remote-tracking branch, not just this one. Strokes are computed on the Host and shipped with the data, so "the rows join up" is an assertion rather than something to eyeball. Two things make it hold:
+
+- **The straight runs are elements pinned to the row's bottom**, not coordinates inside a fixed-height box. A row's height is not fixed — expanding a commit makes it much taller — and a fixed box left a gap between every pair of rows, which is what made the tree look like it was floating.
+- **When several lanes wait for the same commit, all but the claimed one are released.** Otherwise they keep waiting for a commit already emitted and drag a line to the bottom with no commit on it — the other half of the floating look.
+
+A branch opening here starts **below** the node and one converging here arrives **above** it, each joined to the node by a curve; one hue carries three weights — the commit's own line, the branch curves, and the lanes merely passing through. Expand a commit for its full message, the files it touched, and what you can do to it: rewind, revert, cherry-pick, rebase, or tag. Click a changed file to see its diff inside that commit.
 - **Remotes** — push, pull, fetch, and a **Sync** that fetches, fast-forwards, then pushes. It refuses to merge a diverged branch rather than inventing a merge commit.
 - **Stash** — set work aside and take it back later (pop, apply, drop).
 
@@ -86,7 +91,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 ## Development
 
 ```sh
-node test/smoke.mjs     # 616 assertions; runs real git, no DSH required
+node test/smoke.mjs     # 617 assertions; runs real git, no DSH required
 ```
 
 ```

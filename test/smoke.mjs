@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildGraph, createGitCore, diffRows, graphSegments, quoteFor, shellQuote } from '../lib/git-core.js';
+import { buildGraph, createGitCore, diffRows, graphGeometry, quoteFor, shellQuote } from '../lib/git-core.js';
 import {
   buildUserPrompt,
   explainFileChange,
@@ -1153,15 +1153,19 @@ try {
       head: oneCommit.hash,
       branch: 'main',
       // With the strokes included, so the render guard paints the real geometry
-      // rather than a node with nothing joined to it.
+      // rather than a dot with nothing joined to it.
       graph: {
         laneCount: 2,
         rows: [{
           lane: 0, before: [], after: [0, 1], parentLanes: [0, 1],
-          segments: [
-            { kind: 'own', lane: 0, from: 12, to: 29, d: 'M 6.5 12 L 6.5 29' },
-            { kind: 'branch', lane: 1, from: 12, to: 29, d: 'M 6.5 12 C 6.5 20, 17.5 20, 17.5 29' },
-          ],
+          geometry: {
+            verticals: [
+              { lane: 0, top: 16, bottom: 'end' },
+              { lane: 1, top: 26, bottom: 'end' },
+            ],
+            curves: [{ lane: 1, d: 'M 6.5 16 C 6.5 19, 17.5 9, 17.5 26' }],
+            node: { lane: 0, y: 16 },
+          },
         }],
       },
       commits: [oneCommit],
@@ -1256,60 +1260,93 @@ try {
       }
 
 
-  section('the commit graph joins row to row');
-  // The reported defect: with more than one branch the tree looked broken and the
-  // rows did not meet. The rows are SVG cells only ROW_H tall while the row also
-  // carries padding and a border, so a stroke that stopped at the edge left a gap;
-  // and a parent lane opening at a commit was drawn as a bare stub with nothing
-  // joining it to its node.
-  const LANE_WIDTH = 11;
-  const ROW_HEIGHT = 24;
-  const OVERDRAW = 5;
-  const geometry = (commits) =>
-    buildGraph(commits).rows.map((row) => graphSegments(row, { laneWidth: LANE_WIDTH, rowHeight: ROW_HEIGHT, pad: OVERDRAW }));
+  section('the commit graph joins row to row, and every lane dies with its commit');
+  // Two defects, both reported from a real window: rows did not meet, and a lane
+  // that had already converged kept a line running to the bottom with no commit
+  // on it. The first is a fixed-height box (a row is taller than the box, so every
+  // pair of rows had a gap); the second is a lane that was never released when two
+  // lanes waited for the same commit.
+  const NODE_Y = 16;
+  const CURVE = 10;
+  const geometryOf = (commits) => buildGraph(commits).rows.map((row) => graphGeometry(row, { nodeY: NODE_Y, curve: CURVE }));
 
-  const linearRows = geometry([
+  // Two lanes wait for `b` (d's parent and c's parent): the second must be
+  // released when `b` is emitted.
+  const branched = [
+    { hash: 'e', parents: ['d', 'c'] },
+    { hash: 'd', parents: ['b'] },
     { hash: 'c', parents: ['b'] },
     { hash: 'b', parents: ['a'] },
     { hash: 'a', parents: [] },
-  ]);
-  check('a single lane overdraws both edges of its row', linearRows[1][0].from === -OVERDRAW && linearRows[1][0].to === ROW_HEIGHT + OVERDRAW, linearRows[1][0]);
-  check('and the newest commit starts at its node', linearRows[0][0].from === ROW_HEIGHT / 2, linearRows[0][0]);
-  check('while the root ends at its node', linearRows[2][0].to === ROW_HEIGHT / 2, linearRows[2][0]);
+  ];
+  const branchedGraph = buildGraph(branched);
+  check(
+    'a lane that converges into an emitted commit is released',
+    !branchedGraph.rows[3].after.includes(1),
+    branchedGraph.rows[3],
+  );
+  check(
+    'so nothing is left running past the last commit',
+    branchedGraph.rows.at(-1).after.length === 0,
+    branchedGraph.rows.at(-1),
+  );
+  const branchedRows = branchedGraph.rows.map((row) => graphGeometry(row, { nodeY: NODE_Y, curve: CURVE }));
+  check(
+    'the converged lane is drawn into the node instead',
+    branchedRows[3].curves.length === 1 && branchedRows[3].verticals.some((bar) => bar.bottom === NODE_Y - CURVE),
+    branchedRows[3],
+  );
 
-  // A merge: the second parent's lane must LEAVE the node, and the stroke must
-  // reach the far edge so the next row can pick it up.
-  const mergedRows = geometry([
+  // Every straight run either reaches the row's end or stops on the node, and a
+  // run that reaches the end belongs to a lane that continues into the next row.
+  const strays = (rows, graphRows) => {
+    const found = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      for (const bar of rows[index].verticals) {
+        const continues = graphRows[index].after.includes(bar.lane);
+        if (bar.bottom === 'end' && !continues) found.push({ row: index, lane: bar.lane, why: 'runs past a dead lane' });
+        if (continues && bar.bottom !== 'end') found.push({ row: index, lane: bar.lane, why: 'stops before the row end' });
+      }
+    }
+    return found;
+  };
+  check('every continuing lane is pinned to the row end', strays(branchedRows, branchedGraph.rows).length === 0, strays(branchedRows, branchedGraph.rows));
+
+  // A row that continues a lane above must start that lane at the top, so the two
+  // strokes meet at the row boundary whatever the row's height.
+  const seams = (rows, graphRows) => {
+    const found = [];
+    for (let index = 1; index < rows.length; index += 1) {
+      for (const bar of rows[index].verticals) {
+        if (!graphRows[index].before.includes(bar.lane)) continue;
+        if (bar.top !== 0) found.push({ row: index, lane: bar.lane, top: bar.top });
+      }
+    }
+    return found;
+  };
+  check('and every inherited lane starts at the row top', seams(branchedRows, branchedGraph.rows).length === 0, seams(branchedRows, branchedGraph.rows));
+
+  // A root commit has nothing below it.
+  const rootGeometry = branchedRows.at(-1);
+  check(
+    'a root commit stops its own line at the node',
+    rootGeometry.verticals.every((bar) => bar.bottom !== 'end'),
+    rootGeometry.verticals,
+  );
+
+  // A branch opening here leaves BELOW the node, and a merge arrives ABOVE it, so
+  // neither stroke floats: both are joined to the node by a curve.
+  const mergeRow = geometryOf([
     { hash: 'm', parents: ['a', 'b'] },
     { hash: 'a', parents: ['r'] },
     { hash: 'b', parents: ['r'] },
     { hash: 'r', parents: [] },
-  ]);
-  const branch = mergedRows[0].find((segment) => segment.kind === 'branch');
-  check('a second parent branches out of the node', branch !== undefined && branch.from === ROW_HEIGHT / 2, mergedRows[0]);
-  check('and reaches the next row', branch !== undefined && branch.to === ROW_HEIGHT + OVERDRAW, branch);
-  check('the node keeps its own lane', mergedRows[0].some((segment) => segment.kind === 'own'), mergedRows[0]);
+  ])[0];
+  const opening = mergeRow.verticals.find((bar) => bar.lane !== mergeRow.node.lane && bar.top === NODE_Y + CURVE);
+  check('a branch lane starts below the node', opening !== undefined, mergeRow.verticals);
+  check('and a curve joins it to the node', mergeRow.curves.length === 1 && mergeRow.curves[0].d.startsWith(`M ${mergeRow.node.lane * 11 + 6.5} ${NODE_Y}`), mergeRow.curves);
 
-  // The property that was broken: wherever a lane continues into the next row,
-  // the stroke above it must reach the bottom edge and the one below the top.
-  const brokenJoins = (rows) => {
-    const broken = [];
-    for (let index = 0; index < rows.length - 1; index += 1) {
-      const next = new Map(rows[index + 1].map((segment) => [segment.lane, segment]));
-      for (const segment of rows[index]) {
-        const following = next.get(segment.lane);
-        if (following === undefined) continue;
-        if (segment.to !== ROW_HEIGHT + OVERDRAW || following.from !== -OVERDRAW) {
-          broken.push({ row: index, lane: segment.lane, to: segment.to, from: following.from });
-        }
-      }
-    }
-    return broken;
-  };
-  check('every lane that continues meets the row below', brokenJoins(linearRows).length === 0, brokenJoins(linearRows));
-  check('and so does every lane through a merge', brokenJoins(mergedRows).length === 0, brokenJoins(mergedRows));
-
-  // And the same property on a real repository that actually has a merge.
+  // On a real repository with a real merge.
   const mergeRepo = join(sandbox, 'graph-repo');
   await core.init({ cwd: mergeRepo });
   for (const [key, value] of [['user.name', 'Graph User'], ['user.email', 'graph@example.com']]) {
@@ -1329,14 +1366,26 @@ try {
   const mergedIn = await core.merge({ cwd: mergeRepo, branch: 'side' });
   check('the fixture merge actually happened', mergedIn.ok === true, mergedIn);
   const liveHistory = await core.history({ cwd: mergeRepo, limit: 10 });
-  check('a real history carries its geometry', liveHistory.ok === true && liveHistory.graph.rows.every((row) => Array.isArray(row.segments)), liveHistory.graph?.rows?.[0]);
   check(
-    'a real merge produces a branch stroke',
-    liveHistory.graph.rows.some((row) => row.segments.some((segment) => segment.kind === 'branch')),
-    liveHistory.graph.rows.map((row) => row.segments.map((segment) => segment.kind)),
+    'a real history carries its geometry',
+    liveHistory.ok === true && liveHistory.graph.rows.every((row) => Array.isArray(row.geometry?.verticals)),
+    liveHistory.graph?.rows?.[0],
   );
-  const liveSegments = liveHistory.graph.rows.map((row) => row.segments);
-  check('and every lane in it joins the row below', brokenJoins(liveSegments).length === 0, brokenJoins(liveSegments));
+  check(
+    'a real merge produces a curve',
+    liveHistory.graph.rows.some((row) => row.geometry.curves.length > 0),
+    liveHistory.graph.rows.map((row) => row.geometry.curves.length),
+  );
+  check(
+    'and the real history has no stray lane',
+    strays(liveHistory.graph.rows.map((row) => row.geometry), liveHistory.graph.rows).length === 0,
+    strays(liveHistory.graph.rows.map((row) => row.geometry), liveHistory.graph.rows),
+  );
+  check(
+    'nor a seam',
+    seams(liveHistory.graph.rows.map((row) => row.geometry), liveHistory.graph.rows).length === 0,
+    seams(liveHistory.graph.rows.map((row) => row.geometry), liveHistory.graph.rows),
+  );
 
   section('a .gitignore is tidied, not only appended to');
   const messyIgnore = [
