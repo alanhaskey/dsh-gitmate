@@ -51,6 +51,14 @@ A branch opening here starts **below** the node and one converging here arrives 
 - **Remotes** — push, pull, fetch, and a **Sync** that fetches, fast-forwards, then pushes. It refuses to merge a diverged branch rather than inventing a merge commit.
 - **Stash** — set work aside and take it back later (pop, apply, drop).
 
+## A directory holding several repositories
+
+A workspace root is often just a **container for several projects** — not a repository itself, with `alpha/` and `beta/` below it. Asking "is this a repository" answers "no" for every one of them, so the panel used to offer only to initialise a new one.
+
+The panel now **finds the repositories under that root** (three levels deep, skipping `node_modules`/`vendor`/`dist` and the like, at most forty), lists them, and works on the one you pick. A chip in the header takes you back to the list. **When the root is itself a repository it lists only itself**, so nested submodules are not offered as separate projects.
+
+The boundary: the panel only accepts a path **inside the session's directory** — `/etc`, or anything that climbs out with `../..`, is ignored and the session's own folder is used instead. The agent tools work the same way: point one at a subdirectory and git finds the repository root by itself.
+
 ## Setup
 
 Without a repository the **history button is disabled** — there is no history to show — while **settings stays reachable**, because that is where someone looks when the panel is not doing what they expect. If the repository disappears while the panel is open (the folder changed, `.git` was removed), the view falls back to the change list rather than leaving the button lit on a view that cannot render.
@@ -91,7 +99,7 @@ Settings live in this plugin's own row in `cordis.patch.yml`, so they survive up
 ## Development
 
 ```sh
-node test/smoke.mjs     # 617 assertions; runs real git, no DSH required
+node test/smoke.mjs     # 634 assertions; runs real git, no DSH required
 ```
 
 ```

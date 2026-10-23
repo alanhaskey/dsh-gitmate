@@ -990,6 +990,24 @@ try {
   check('and leaves those changes staged', back.staged > 0, back);
 
   section('every view of the panel renders without throwing');
+
+  // State slots are addressed by NAME: the panel's own `useState` order is the
+  // authority, and hard-coded indices silently pointed at the wrong slot the
+  // moment a state was inserted.
+  const slotOf = new Map(
+    [...readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8').matchAll(/const \[(\w+), set\w+\] = useState\(/g)].map(
+      (match, index) => [match[1], index],
+    ),
+  );
+  /** Turn `{ status: … }` into the slot-indexed patch the harness consumes. */
+  const at = (named) =>
+    Object.fromEntries(
+      Object.entries(named).map(([name, value]) => {
+        const index = slotOf.get(name);
+        if (index === undefined) throw new Error(`no such panel state: ${name}`);
+        return [index, value];
+      }),
+    );
   {
     const Fragment = Symbol('Fragment');
     const stateOrder = [];
@@ -1140,15 +1158,15 @@ try {
           { kind: 'meta', text: 'mode changed' },
         ];
         /** State slots are addressed by their index in the panel's own useState order. */
-        const filled = {
-          0: repoStatus,
-          11: { userName: 'u', userEmail: 'e', scope: 'local' },
-          13: [{ name: 'main', current: true, upstream: 'origin/main', track: '' }],
-          14: true,
-          17: { writable: true, entryId: 'dsh-git', values: {} },
-          18: { messageLanguage: 'auto', messageStyle: 'conventional', messageTemplate: 't', signoff: false, defaultBranch: 'main' },
-          19: { ok: true, exists: true, current: 'node_modules/\n', groups: [{ id: 'node', label: 'Node', detected: true, entries: [], missing: 2 }], suggested: ['node'] },
-          21: {
+        const filledNamed = {
+          status: repoStatus,
+          identity: { userName: 'u', userEmail: 'e', scope: 'local' },
+          branches: [{ name: 'main', current: true, upstream: 'origin/main', track: '' }],
+          branchOpen: true,
+          settings: { writable: true, entryId: 'dsh-git', values: {} },
+          draft: { messageLanguage: 'auto', messageStyle: 'conventional', messageTemplate: 't', signoff: false, defaultBranch: 'main' },
+          ignorePlan: { ok: true, exists: true, current: 'node_modules/\n', groups: [{ id: 'node', label: 'Node', detected: true, entries: [], missing: 2 }], suggested: ['node'] },
+          history: {
       ok: true,
       head: oneCommit.hash,
       branch: 'main',
@@ -1170,39 +1188,67 @@ try {
       },
       commits: [oneCommit],
     },
-          22: oneCommit.hash,
-          23: { [oneCommit.hash]: { ok: true, body: 'why', message: 'feat: x', files: [{ path: 'a.js', additions: 2, deletions: 1 }] } },
-          24: { hash: oneCommit.hash, mode: 'hard' },
-          25: oneCommit.hash,
-          26: 'v1.0.0',
-          27: { ok: true, findings: [{ path: 'a.js', line: 3, severity: 'bug', what: 'w', fix: 'f' }], dropped: 1 },
-          29: { ok: true, complete: true, groups: [{ message: 'feat: a', paths: ['a.js'], why: 'one thing' }] },
-          30: { hash: oneCommit.hash, path: 'a.js' },
-          31: { ok: true, rows: patchRows, flags: [], files: [] },
-          32: [{ ref: 'stash@{0}', subject: 'wip', when: 'now' }],
-          33: true,
-          34: 120,
+          openCommit: oneCommit.hash,
+          commits: { [oneCommit.hash]: { ok: true, body: 'why', message: 'feat: x', files: [{ path: 'a.js', additions: 2, deletions: 1 }] } },
+          rewind: { hash: oneCommit.hash, mode: 'hard' },
+          rebaseAt: oneCommit.hash,
+          tagName: 'v1.0.0',
+          tooltip: { ok: true, findings: [{ path: 'a.js', line: 3, severity: 'bug', what: 'w', fix: 'f' }], dropped: 1 },
+          split: { ok: true, complete: true, groups: [{ message: 'feat: a', paths: ['a.js'], why: 'one thing' }] },
+          commitFile: { hash: oneCommit.hash, path: 'a.js' },
+          commitPatch: { ok: true, rows: patchRows, flags: [], files: [] },
+          stashes: [{ ref: 'stash@{0}', subject: 'wip', when: 'now' }],
+          stashOpen: true,
+          messageHeight: 120,
         };
+        const filled = at(filledNamed);
+        const repoFailure = { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' };
         const scenarios = [
           ['a fresh mount', {}],
-          ['no repository', { 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' } }],
-      // The state the user reported: no repository, with the history view asked
-      // for. The empty state must be what renders.
-      // Both carry the loaded settings payload, so the comparison is about which
-      // view wins, not about which data happened to be present.
-      ['no repository, history asked for', { ...filled, 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' }, 12: 'history' }],
-      ['no repository, settings asked for', { ...filled, 0: { ok: true, isRepo: false, root: '/tmp/repo', reason: 'no .git here' }, 12: 'settings' }],
-          ['a failed status read', { 0: { ok: false, isRepo: false, error: 'git is not installed' } }],
-          ['a clean tree', { 0: { ...repoStatus, clean: true, staged: [], unstaged: [], untracked: [], conflicted: [], operation: '', ahead: 0 } }],
-          ['a detached HEAD', { 0: { ...repoStatus, detached: true, branch: '', upstream: '', operation: '' }, 13: [] }],
-          ['a missing identity', { 0: { ...repoStatus, identityConfigured: false }, 11: { userName: '', userEmail: '', scope: 'local' } }],
-          ['the changes view', { ...filled, 12: 'changes' }],
-          ['the settings view', { ...filled, 12: 'settings' }],
-          ['the history view', { ...filled, 12: 'history' }],
-          ['the review in place of the list', { ...filled, 12: 'changes' }],
-          ['the split in place of the list', { ...filled, 12: 'changes', 27: null }],
-      ['a truncated split plan', { ...filled, 12: 'changes', 27: null, 29: { ok: true, complete: false, truncated: true, groups: [{ message: 'feat: a', paths: ['a.js'], why: 'x' }] } }],
-      ['an unreadable split answer', { ...filled, 12: 'changes', 27: null, 29: { ok: true, complete: false, unparsed: true, truncated: true, groups: [], raw: 'not json' } }],
+          ['no repository', at({ status: repoFailure })],
+          ['no repository, history asked for', at({ ...filledNamed, status: repoFailure, view: 'history' })],
+          ['no repository, settings asked for', at({ ...filledNamed, status: repoFailure, view: 'settings' })],
+          [
+            'several repositories under one workspace',
+            at({
+              status: repoFailure,
+              repos: {
+                ok: true,
+                root: '/tmp/repo',
+                repos: [
+                  { path: '/tmp/repo/alpha', name: 'alpha' },
+                  { path: '/tmp/repo/beta', name: 'beta' },
+                ],
+              },
+            }),
+          ],
+          ['a failed status read', at({ status: { ok: false, isRepo: false, error: 'git is not installed' } })],
+          ['a clean tree', at({ status: { ...repoStatus, clean: true, staged: [], unstaged: [], untracked: [], conflicted: [], operation: '', ahead: 0 } })],
+          ['a detached HEAD', at({ status: { ...repoStatus, detached: true, branch: '', upstream: '', operation: '' }, branches: [] })],
+          ['a missing identity', at({ status: { ...repoStatus, identityConfigured: false }, identity: { userName: '', userEmail: '', scope: 'local' } })],
+          ['the changes view', at({ ...filledNamed, view: 'changes' })],
+          ['the settings view', at({ ...filledNamed, view: 'settings' })],
+          ['the history view', at({ ...filledNamed, view: 'history' })],
+          ['the review in place of the list', at({ ...filledNamed, view: 'changes' })],
+          ['the split in place of the list', at({ ...filledNamed, view: 'changes', review: null })],
+          [
+            'a truncated split plan',
+            at({
+              ...filledNamed,
+              view: 'changes',
+              review: null,
+              split: { ok: true, complete: false, truncated: true, groups: [{ message: 'feat: a', paths: ['a.js'], why: 'x' }] },
+            }),
+          ],
+          [
+            'an unreadable split answer',
+            at({
+              ...filledNamed,
+              view: 'changes',
+              review: null,
+              split: { ok: true, complete: false, unparsed: true, truncated: true, groups: [], raw: 'not json' },
+            }),
+          ],
         ];
 
         const failures = [];
@@ -1238,6 +1284,13 @@ try {
       noRepo.includes('notRepoHint') && noRepo.includes('notRepo'),
       noRepo.slice(0, 120),
     );
+    const picker = screenFor('several repositories under one workspace');
+    check(
+      'a workspace holding several repositories offers them by name',
+      picker.includes('alpha') && picker.includes('beta') && picker.includes('repoPickHint'),
+      picker.slice(0, 200),
+    );
+    check('and does not claim there is nothing to open', !picker.includes('notRepoHint'), picker.slice(0, 200));
     const noRepoSettings = screenFor('no repository, settings asked for');
     check(
       'and asking for settings shows settings, not the initialise card',
@@ -1386,6 +1439,42 @@ try {
     seams(liveHistory.graph.rows.map((row) => row.geometry), liveHistory.graph.rows).length === 0,
     seams(liveHistory.graph.rows.map((row) => row.geometry), liveHistory.graph.rows),
   );
+
+  section('a workspace root can hold several repositories');
+  // A directory holding several projects answers "not a repository" to every
+  // question about itself, so the panel offered to create a sixth repository
+  // instead of listing the ones that were already there.
+  const { mkdirSync: makeDir } = await import('node:fs');
+  const multiRoot = join(sandbox, 'workspace-root');
+  for (const relative of ['alpha', 'beta', 'group/gamma', 'node_modules/pkg']) {
+    makeDir(join(multiRoot, relative, '.git'), { recursive: true });
+  }
+  // A folder with no `.git` is not a repository and must not be listed.
+  makeDir(join(multiRoot, 'plain'), { recursive: true });
+  const found = await core.discoverRepositories({ cwd: multiRoot });
+  check('the repositories below the root are found', found.repos.map((repo) => repo.name).join(',') === 'alpha,beta,gamma', found.repos);
+  check('a folder that is not a project is left out', !found.repos.some((repo) => repo.name === 'plain'), found.repos);
+  check('and node_modules is not walked', !found.repos.some((repo) => repo.path.includes('node_modules')), found.repos);
+  check('the root that is not a repository says so', found.isRepo === false, found);
+  check('the depth is bounded', (await core.discoverRepositories({ cwd: multiRoot, maxDepth: 0 })).repos.length === 0, 'maxDepth 0 must not descend');
+  check('a plain folder yields none', (await core.discoverRepositories({ cwd: join(multiRoot, 'plain') })).repos.length === 0, 'plain must be empty');
+
+  // A `.git` FILE is a worktree or submodule pointer, and still a repository root.
+  writeFileSync(join(multiRoot, 'worktree-root.txt'), 'x\n');
+  makeDir(join(multiRoot, 'linked'), { recursive: true });
+  writeFileSync(join(multiRoot, 'linked', '.git'), 'gitdir: /elsewhere\n');
+  check(
+    'a worktree pointer counts as a repository',
+    (await core.discoverRepositories({ cwd: multiRoot })).repos.some((repo) => repo.name === 'linked'),
+    (await core.discoverRepositories({ cwd: multiRoot })).repos.map((repo) => repo.name),
+  );
+
+  // A root that IS a repository answers with itself, not with everything inside.
+  const rootRepo = join(sandbox, 'root-repo');
+  await core.init({ cwd: rootRepo });
+  makeDir(join(rootRepo, 'nested', '.git'), { recursive: true });
+  const rootListed = await core.discoverRepositories({ cwd: rootRepo });
+  check('a repository root lists itself only', rootListed.isRepo === true && rootListed.repos.length === 1, rootListed.repos);
 
   section('a .gitignore is tidied, not only appended to');
   const messyIgnore = [
@@ -2192,6 +2281,41 @@ try {
       lastShellRequest.sandboxPolicy?.sessionId === 'session-plain',
     lastShellRequest.sandboxPolicy,
   );
+
+  section('the panel can be pointed at one of them');
+  const containerDir = join(sandbox, 'bridge-workspace');
+  makeDir(join(containerDir, 'inner', '.git'), { recursive: true });
+  await core.init({ cwd: join(containerDir, 'inner') });
+  for (const [key, value] of [['user.name', 'Inner User'], ['user.email', 'inner@example.com']]) {
+    await core.config({ cwd: join(containerDir, 'inner'), action: 'set', key, value });
+  }
+  writeFileSync(join(containerDir, 'inner', 'inner.txt'), 'inner\n');
+  await core.commit({ cwd: join(containerDir, 'inner'), all: true, message: 'chore: inner' });
+  sessionCwds['session-workspace'] = containerDir;
+
+  const listedRepos = (await ask('repos', { sessionId: 'session-workspace' })).body;
+  check('the route lists them', listedRepos.value?.ok === true && listedRepos.value.repos.some((repo) => repo.name === 'inner'), listedRepos.value);
+
+  const atRoot = (await ask('status', { sessionId: 'session-workspace' })).body;
+  check('the workspace root itself is not a repository', atRoot.value?.isRepo === false, atRoot.value);
+
+  const pointedStatus = (await ask('status', { sessionId: 'session-workspace', repo: join(containerDir, 'inner') })).body;
+  check('naming one makes the panel answer for it', pointedStatus.value?.isRepo === true && String(pointedStatus.value.root).endsWith('inner'), pointedStatus.value);
+
+  // Containment: a path outside the session's folder is ignored, not honoured.
+  const outsideStatus = (await ask('status', { sessionId: 'session-workspace', repo: '/etc' })).body;
+  check('a repository outside the session folder is ignored', outsideStatus.value?.isRepo === false, outsideStatus.value);
+  const climbingStatus = (await ask('status', { sessionId: 'session-workspace', repo: `${containerDir}/../..` })).body;
+  check('and so is one that climbs out with dots', climbingStatus.value?.isRepo === false, climbingStatus.value);
+
+  // Acting inside the chosen repository really acts on it.
+  writeFileSync(join(containerDir, 'inner', 'staged.txt'), 'staged\n');
+  const stagedInner = (
+    await ask('stage', { sessionId: 'session-workspace', repo: join(containerDir, 'inner'), action: 'add', paths: ['staged.txt'] })
+  ).body;
+  check('an operation lands in the chosen repository', stagedInner.value?.ok === true, stagedInner.value);
+  const afterStageInner = await core.status({ cwd: join(containerDir, 'inner') });
+  check('and the file is staged there', afterStageInner.staged.some((entry) => entry.path === 'staged.txt'), afterStageInner.staged);
 
   section('committing one group leaves the rest staged');
   const groupRepo = join(sandbox, 'group-repo');
